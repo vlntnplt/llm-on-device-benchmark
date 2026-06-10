@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/llm-on-device-benchmark/schema/events.schema.json",
+  "title": "Backend events object",
+  "description": "Emitted on stdout by `<exe> run` — one object per (model, provider, task). Durations are monotonic (mono_ns); the anchor maps them to wall time.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "backend", "provider", "device", "model", "quant",
+    "task", "versions", "anchor", "healthy", "load", "iterations"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1",
+      "description": "Events schema version."
+    },
+    "backend": { "enum": ["ggml", "tjs"] },
+    "provider": {
+      "type": "string",
+      "description": "The single EP this run used, e.g. cpu, cuda, metal, webgpu, coreml."
+    },
+    "device": { "type": "string", "description": "Human device label, e.g. 'AMD Ryzen 9 7950X' or 'NVIDIA RTX 5080'." },
+    "model": { "type": "string" },
+    "quant": { "enum": ["fp16", "q8", "q4", "q4f16"] },
+    "task": { "type": "string", "description": "Task name (matches tasks/*.yaml)." },
+    "versions": {
+      "type": "object",
+      "description": "Exact stack identity == `<exe> version`. Shape is backend-specific; threads is shared.",
+      "required": ["threads"],
+      "properties": {
+        "threads": { "type": "integer", "minimum": 1, "description": "Intra-op thread count, pinned to physical cores (shared across backends)." }
+      }
+    },
+    "anchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["wall_unix_ns", "mono_ns"],
+      "description": "Captured once at startup so the harness can map mono_ns events to wall time.",
+      "properties": {
+        "wall_unix_ns": { "type": "integer", "minimum": 0, "description": "CLOCK_REALTIME at t0, nanoseconds since the Unix epoch." },
+        "mono_ns": { "type": "integer", "minimum": 0, "description": "CLOCK_MONOTONIC at t0, nanoseconds." }
+      }
+    },
+    "healthy": {
+      "type": "boolean",
+      "description": "This run's expects all passed (vacuously true when the task has no expects)."
+    },
+    "load": {
+      "type": "array",
+      "description": "Measured ONCE per process, before the K timed iterations.",
+      "items": { "$ref": "#/$defs/loadEvent" },
+      "minItems": 1
+    },
+    "iterations": {
+      "type": "array",
+      "description": "K timed repeats of the task; no model reload between them.",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["events"],
+        "properties": {
+          "events": {
+            "type": "array",
+            "description": "prefill / decode / turn-end, repeated per turn for multi-turn tasks (context_size grows).",
+            "minItems": 1,
+            "items": {
+              "oneOf": [
+                { "$ref": "#/$defs/prefillEvent" },
+                { "$ref": "#/$defs/decodeEvent" },
+                { "$ref": "#/$defs/turnEndEvent" }
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "span": {
+      "type": "object",
+      "properties": {
+        "start_ns": { "type": "integer", "minimum": 0, "description": "Monotonic start stamp." },
+        "end_ns": { "type": "integer", "minimum": 0, "description": "Monotonic end stamp." }
+      },
+      "required": ["start_ns", "end_ns"]
+    },
+    "loadEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "start_ns", "end_ns"],
+      "properties": {
+        "type": { "enum": ["model-load", "context-init", "warmup"] },
+        "start_ns": { "type": "integer", "minimum": 0 },
+        "end_ns": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "prefillEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "context_size", "tokens_count", "start_ns", "end_ns"],
+      "properties": {
+        "type": { "const": "prefill" },
+        "context_size": { "type": "integer", "minimum": 0, "description": "KV-cache size in tokens BEFORE this prefill (0 on the first turn)." },
+        "tokens_count": { "type": "integer", "minimum": 1, "description": "Prompt tokens processed in this prefill batch." },
+        "start_ns": { "type": "integer", "minimum": 0 },
+        "end_ns": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "decodeEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "context_size", "tokens_count", "token_ns", "start_ns", "end_ns"],
+      "properties": {
+        "type": { "const": "decode" },
+        "context_size": { "type": "integer", "minimum": 0, "description": "KV-cache size in tokens at the start of decode (= prompt + prior turns)." },
+        "tokens_count": { "type": "integer", "minimum": 1, "description": "Tokens decoded this turn; MUST equal the turn's nb_tokens." },
+        "token_ns": {
+          "type": "array",
+          "description": "Monotonic stamp at which each decoded token became available. length == tokens_count. token_ns[0] anchors TTFT; steady-state tps is over tokens 2..N.",
+          "items": { "type": "integer", "minimum": 0 },
+          "minItems": 1
+        },
+        "start_ns": { "type": "integer", "minimum": 0 },
+        "end_ns": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "turnEndEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "completion", "expect_pass", "start_ns", "end_ns"],
+      "properties": {
+        "type": { "const": "turn-end" },
+        "completion": {
+          "type": "string",
+          "description": "The DECODED GENERATED TEXT for this turn ONLY (never the prompt/corpus). Carried so results can be eyeballed to confirm real inference, not garbage."
+        },
+        "expect_pass": {
+          "type": "boolean",
+          "description": "Whether the completion satisfied the turn's `expect` list; true when the turn had no expects."
+        },
+        "start_ns": { "type": "integer", "minimum": 0 },
+        "end_ns": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

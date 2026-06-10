@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/llm-on-device-benchmark/schema/results.schema.json",
+  "title": "Aggregated results object",
+  "description": "Written by the harness — one per backend. Each metric is summarized as [p50, max] over the appropriate sample pool.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "backend", "machine", "iters", "spawns", "runs"],
+  "properties": {
+    "schema_version": { "const": "1" },
+    "backend": { "enum": ["ggml", "tjs"] },
+    "machine": {
+      "type": "object",
+      "required": ["host", "os", "cpu", "cpu_cores", "cpu_threads", "gpus"],
+      "properties": {
+        "host": { "type": "string", "description": "Machine name — hostname, or `bench run --machine`. The analysis loader's label when results aren't under a per-machine subdir." },
+        "os": { "enum": ["linux", "macos", "windows"] },
+        "cpu": { "type": "string" },
+        "cpu_cores": { "type": "integer", "minimum": 1, "description": "Physical cores." },
+        "cpu_threads": { "type": "integer", "minimum": 1, "description": "Logical cores (SMT)." },
+        "gpus": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "iters": { "type": "integer", "minimum": 1, "description": "K: in-process timed iterations per spawn (default 5)." },
+    "spawns": { "type": "integer", "minimum": 1, "description": "S: process re-spawns per cell (default 3). Timing n = iters×spawns; load/mem n = spawns." },
+    "runs": { "type": "array", "items": { "$ref": "#/$defs/run" } }
+  },
+  "$defs": {
+    "stat": {
+      "type": "array",
+      "description": "[p50, max] — median ranks the stacks, max flags instability.",
+      "items": { "type": "number" },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "nullableStat": {
+      "oneOf": [
+        { "$ref": "#/$defs/stat" },
+        { "type": "null", "description": "Not measurable for this backend/provider (e.g. *_vram on a CPU EP)." }
+      ]
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "device", "model", "quant", "healthy", "vram_method", "tasks"],
+      "properties": {
+        "provider": { "type": "string" },
+        "device": { "type": "string" },
+        "model": { "type": "string" },
+        "quant": { "enum": ["fp16", "q8", "q4", "q4f16"] },
+        "healthy": { "type": "boolean", "description": "Brain-check passed for this (model, provider)." },
+        "unhealthy_reason": { "type": "string", "description": "Present iff healthy=false: which brain-check failed and why; timed tasks were skipped." },
+        "timed_out_tasks": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Timed tasks judged too slow to score: a single iteration outlived the harness backstop, or a smaller task ran below the usable tok/s floor (costlier tasks are then skipped). Absent from `tasks`; the report shows them as 'too slow'."
+        },
+        "errored_tasks": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Timed tasks that were attempted but produced no sample for a reason other than slowness — a spawn that died emitting nothing (crash, OOM, device-lost). Distinct from `timed_out_tasks`: a failure, not slowness. Absent from `tasks`; the report shows them as 'errored'."
+        },
+        "vram_method": { "enum": ["nvml", "unified", "n/a"], "description": "How per-PID VRAM was obtained." },
+        "tasks": { "type": "array", "items": { "$ref": "#/$defs/taskResult" } }
+      }
+    },
+    "taskResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["task", "metrics", "memory", "sample_completions"],
+      "properties": {
+        "task": { "type": "string" },
+        "metrics": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["cold_start_ms", "model_load_ms", "context_init_ms", "warmup_ms", "ttft_ms", "decode_tps", "prefill_tps", "completion_ms"],
+          "properties": {
+            "cold_start_ms": { "$ref": "#/$defs/nullableStat", "description": "First-touch load (cold page cache): model-load + context-init, attributed once to the first scored task, n=1." },
+            "model_load_ms": { "$ref": "#/$defs/stat", "description": "Warm load phase — read/mmap weights and upload to the device. Warm spawns pooled." },
+            "context_init_ms": { "$ref": "#/$defs/stat", "description": "Warm load phase — allocate the KV cache / compute graph / context after weights are resident." },
+            "warmup_ms": { "$ref": "#/$defs/stat", "description": "Warm load phase — one-time kernel/JIT warm pass before the timed iterations. Paid once per process, before any prompt." },
+            "ttft_ms": { "$ref": "#/$defs/stat" },
+            "decode_tps": { "$ref": "#/$defs/stat" },
+            "prefill_tps": { "$ref": "#/$defs/nullableStat" },
+            "completion_ms": { "$ref": "#/$defs/stat" }
+          }
+        },
+        "memory": {
+          "type": "object",
+          "description": "Per-phase footprint over the timed iterations. Prefill is a ramp, so only its peak is meaningful. Decode is a plateau and gets two stats: *peak* (high-water — what the device must fit) and *sustained* (median over the decode samples — the steady per-token working set). They diverge when a transient rides into the decode window (e.g. a shape recompile spike still draining when decode starts).",
+          "additionalProperties": false,
+          "required": ["prefill_rss_peak_mb", "prefill_vram_peak_mb", "decode_rss_peak_mb", "decode_vram_peak_mb", "decode_rss_sustained_mb", "decode_vram_sustained_mb"],
+          "properties": {
+            "prefill_rss_peak_mb": { "$ref": "#/$defs/nullableStat", "description": "Peak (high-water) RSS over the prefill spans of the timed iterations — the prompt-ingestion working set. Null if no sample landed in a prefill batch (a prefill shorter than the ~10 ms sample cadence)." },
+            "prefill_vram_peak_mb": { "$ref": "#/$defs/nullableStat", "description": "Peak VRAM over the prefill spans; null on a CPU EP / unified memory or when no prefill sample landed." },
+            "decode_rss_peak_mb": { "$ref": "#/$defs/nullableStat", "description": "Peak (high-water) RSS over the decode spans — what must fit in RAM. Null only if no sample landed in decode." },
+            "decode_vram_peak_mb": { "$ref": "#/$defs/nullableStat", "description": "Peak VRAM over the decode spans; null on a CPU EP / unified memory or when no decode sample landed." },
+            "decode_rss_sustained_mb": { "$ref": "#/$defs/nullableStat", "description": "Median RSS over the decode spans — the sustained generation working set (weights + KV + per-token activations), immune to transients draining out of prefill." },
+            "decode_vram_sustained_mb": { "$ref": "#/$defs/nullableStat", "description": "Median VRAM over the decode spans; null on a CPU EP / unified memory or when no decode sample landed." }
+          }
+        },
+        "sample_completions": {
+          "type": "array",
+          "description": "A few decoded completions (last turn) carried up from the events, so a human can eyeball that the stack produced real text, not garbage. Inspection aid only — not scored.",
+          "items": { "type": "string" },
+          "minItems": 1
+        }
+      }
+    }
+  }
+}
