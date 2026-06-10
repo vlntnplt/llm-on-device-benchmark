@@ -1,0 +1,43 @@
+{
+  "schema_version": "1",
+  "backend": "ggml",
+  "machine": { "host": "3090-box", "os": "linux", "cpu": "AMD Ryzen 9 5950X", "cpu_cores": 16, "cpu_threads": 32, "gpus": ["NVIDIA RTX 3090"] },
+  "iters": 5,
+  "spawns": 3,
+  "runs": [
+    {
+      "provider": "CUDA",
+      "device": "cuda:0",
+      "model": "gemma4-E2B",
+      "quant": "q4",
+      "healthy": true,
+      "vram_method": "nvml",
+      "timed_out_tasks": ["summarize-large"],
+      "errored_tasks": ["summarize-medium"],
+      "tasks": [
+        {
+          "task": "summarize-small",
+          "metrics": {
+            "cold_start_ms": [100, 120],
+            "model_load_ms": [40, 48],
+            "context_init_ms": [6, 8],
+            "warmup_ms": [4, 4],
+            "ttft_ms": [30, 40],
+            "decode_tps": [80, 75],
+            "prefill_tps": [2000, 1900],
+            "completion_ms": [200, 210]
+          },
+          "memory": {
+            "prefill_rss_peak_mb": [850, 870],
+            "prefill_vram_peak_mb": [1600, 1620],
+            "decode_rss_peak_mb": [900, 920],
+            "decode_vram_peak_mb": [1700, 1720],
+            "decode_rss_sustained_mb": [880, 890],
+            "decode_vram_sustained_mb": [1650, 1660]
+          },
+          "sample_completions": ["The passage describes ..."]
+        }
+      ]
+    }
+  ]
+}
