@@ -17,12 +17,27 @@ local and gitignored; this folder is the exception.
    and the matching `<backend>-raw.json.gz` into `results/published/<my-box>/`,
    and generates a `README.md` summarizing the spec (machine, sampling, and a
    `model × quant × provider` coverage table).
-3. Review the generated folder, then open a PR adding it.
+3. Regenerate the shared report so it includes the new submission:
+
+   ```sh
+   uv run --project analysis marimo export html --no-include-code \
+     analysis/report.py -o results/published/report.html
+   ```
+
+4. Review the generated folder + report, then open a PR adding them.
+
+## The report
+
+`report.html` is the code-free static export of `analysis/report.py` over this
+folder — every chart and number in it is computed from the submissions below
+it, so it is regenerated (step 3) whenever one lands. Self-contained: open it
+anywhere, no environment needed.
 
 ## Layout
 
 ```
 results/published/
+  report.html           # static export of the analysis notebook over this folder
   <name>/
     README.md             # auto-generated spec summary (edit freely after)
     <backend>-results.json   # aggregated metrics — what the notebook loads
