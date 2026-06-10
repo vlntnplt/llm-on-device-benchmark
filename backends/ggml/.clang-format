@@ -1,0 +1,16 @@
+# Matches the existing main.cpp style so it stays a forward convention, not a
+# reflow: 4-space indent, attached braces, `Type * name` pointer spacing,
+# 100-column lines, hand-grouped includes preserved.
+BasedOnStyle: LLVM
+IndentWidth: 4
+ColumnLimit: 100
+PointerAlignment: Middle
+SortIncludes: false
+AllowShortFunctionsOnASingleLine: All
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: true
+AllowShortBlocksOnASingleLine: Empty
+AlwaysBreakTemplateDeclarations: Yes
+AlignConsecutiveDeclarations: true
+AlignConsecutiveAssignments: true
+KeepEmptyLinesAtTheStartOfBlocks: false

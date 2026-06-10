@@ -1,0 +1,6 @@
+# The only file the harness reads to invoke this backend.
+# {dir} is substituted with this backend's absolute directory; the harness appends
+# the CLI subcommand + flags (see ../../README.md "Conventions").
+key  = "ggml"                       # must match the events object's `backend`
+name = "llama.cpp / GGML"           # human label for reports
+cmd  = ["{dir}/build/bench-ggml"]   # argv prefix
