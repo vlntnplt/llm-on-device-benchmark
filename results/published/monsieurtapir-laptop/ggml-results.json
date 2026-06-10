@@ -1,0 +1,1057 @@
+{
+  "schema_version": "1",
+  "backend": "ggml",
+  "machine": {
+    "host": "monsieurtapir-laptop",
+    "os": "linux",
+    "cpu": "AMD Ryzen 5 PRO 230 w/ Radeon 760M Graphics",
+    "cpu_cores": 6,
+    "cpu_threads": 12,
+    "gpus": []
+  },
+  "iters": 3,
+  "spawns": 3,
+  "runs": [
+    {
+      "provider": "vulkan",
+      "device": "AMD Radeon 760M Graphics (RADV PHOENIX)",
+      "model": "Qwen3.5-4B",
+      "quant": "q4",
+      "healthy": true,
+      "vram_method": "n/a",
+      "tasks": [
+        {
+          "task": "summarize-small",
+          "metrics": {
+            "cold_start_ms": [
+              3410.89,
+              3410.89
+            ],
+            "model_load_ms": [
+              789.81,
+              791.3
+            ],
+            "context_init_ms": [
+              21.39,
+              58.59
+            ],
+            "warmup_ms": [
+              100.62,
+              101.47
+            ],
+            "ttft_ms": [
+              1521.84,
+              1534.39
+            ],
+            "decode_tps": [
+              12.28,
+              12.28
+            ],
+            "prefill_tps": [
+              9562.92,
+              10319.01
+            ],
+            "completion_ms": [
+              6655.8,
+              6670.27
+            ]
+          },
+          "memory": {
+            "prefill_rss_peak_mb": [
+              4022.7,
+              4022.7
+            ],
+            "prefill_vram_peak_mb": null,
+            "decode_rss_peak_mb": [
+              4022.7,
+              4022.7
+            ],
+            "decode_vram_peak_mb": null,
+            "decode_rss_sustained_mb": [
+              4022.7,
+              4022.7
+            ],
+            "decode_vram_sustained_mb": null
+          },
+          "sample_completions": [
+            "The Antikythera mechanism, discovered in 1901 from a Roman-era shipwreck off the Greek island of Antikythera, is an ancient analogue computer dating back to the second century BCE. Initially overlooked as a corroded lump of bronze and wood, it was later identified as a marvel of"
+          ]
+        },
+        {
+          "task": "summarize-medium",
+          "metrics": {
+            "cold_start_ms": null,
+            "model_load_ms": [
+              790.21,
+              796.86
+            ],
+            "context_init_ms": [
+              25.55,
+              100.05
+            ],
+            "warmup_ms": [
+              99.47,
+              101.01
+            ],
+            "ttft_ms": [
+              3295.86,
+              3309.68
+            ],
+            "decode_tps": [
+              12.21,
+              12.23
+            ],
+            "prefill_tps": [
+              22673.74,
+              24331.67
+            ],
+            "completion_ms": [
+              13692.98,
+              13720.53
+            ]
+          },
+          "memory": {
+            "prefill_rss_peak_mb": [
+              4586.2,
+              4586.2
+            ],
+            "prefill_vram_peak_mb": null,
+            "decode_rss_peak_mb": [
+              4586.2,
+              4586.2
+            ],
+            "decode_vram_peak_mb": null,
+            "decode_rss_sustained_mb": [
+              4586.2,
+              4586.2
+            ],
+            "decode_vram_sustained_mb": null
+          },
+          "sample_completions": [
+            "Here is a summary of the document:\n\nThe history of the lighthouse is inextricably linked to the development of maritime trade and the need to navigate hazardous waters. The concept began with simple bonfires, evolving into the massive Pharos of Alexandria, which used mirrors to amplify its light. While lighthouse construction stalled in Europe after the fall of Rome, it revived during the medieval period with crude coal fires and candles.\n\nMajor technological advancements transformed lighthouses in the 18th and 19th centuries. The introduction of oil lamps provided steadier flames, and Augustin-Jean Fresnel's revolutionary lens concentrated"
+          ]
+        },
+        {
+          "task": "summarize-large",
+          "metrics": {
+            "cold_start_ms": null,
+            "model_load_ms": [
+              787.9,
+              787.9
+            ],
+            "context_init_ms": [
+              225.59,
+              225.59
+            ],
+            "warmup_ms": [
+              99.22,
+              99.22
+            ],
+            "ttft_ms": [
+              6063.09,
+              6063.57
+            ],
+            "decode_tps": [
+              12.14,
+              12.14
+            ],
+            "prefill_tps": [
+              36435.94,
+              45299.82
+            ],
+            "completion_ms": [
+              27074.53,
+              27078.94
+            ]
+          },
+          "memory": {
+            "prefill_rss_peak_mb": [
+              5974.0,
+              5974.0
+            ],
+            "prefill_vram_peak_mb": null,
+            "decode_rss_peak_mb": [
+              5974.0,
+              5974.0
+            ],
+            "decode_vram_peak_mb": null,
+            "decode_rss_sustained_mb": [
+              5960.1,
+              5960.1
+            ],
+            "decode_vram_sustained_mb": null
+          },
+          "sample_completions": [
+            "Here is a summary of the document:\n\nThe document traces the historical evolution of timekeeping from a system of **local solar time** to a unified global standard driven by the need for coordination in modern society.\n\n*   **The Problem of Local Time:** For centuries, time was determined by the position of the sun, meaning different locations had different \"noons.\" This worked for slow-moving societies but became dangerous and impractical with the advent of the **railway**, where trains traveling at high speeds required synchronized schedules to avoid collisions.\n*   **The Railway Solution:** To solve this, the railway industry imposed a single standard time. In Britain, this was **Greenwich Mean Time (GMT)**; in North America, railways created broad time zones spaced an hour apart. This marked the first time a large nation kept one clock, severing the link between time and the sun's position.\n*   **Global Standardization:** In 1884, an international conference established a single **prime meridian** at Greenwich and defined the world into 24 time zones (15 degrees of longitude each). While national borders often distorted these ideal zones, the framework created a patchwork of standard time.\n*   **Seasonal Adjustments:** The"
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "cpu",
+      "device": "AMD Ryzen 5 PRO 230 w/ Radeon 760M Graphics",
+      "model": "Qwen3.5-4B",
+      "quant": "q4",
+      "healthy": true,
+      "vram_method": "n/a",
+      "tasks": [
+        {
+          "task": "summarize-small",
+          "metrics": {
+            "cold_start_ms": null,
+            "model_load_ms": [
+              845.1,
+              854.81
+            ],
+            "context_init_ms": [
+              27.62,
+              28.79
+            ],
+            "warmup_ms": [
+              239.54,
+              241.32
+            ],
+            "ttft_ms": [
+              6517.42,
+              6618.24
+            ],
+            "decode_tps": [
+              8.38,
+              8.39
+            ],
+            "prefill_tps": [
+              62.61,
+              62.81
+            ],
+            "completion_ms": [
+              14154.85,
+              14257.87
+            ]
+          },
+          "memory": {
+            "prefill_rss_peak_mb": [
+              4380.2,
+              4380.2
+            ],
+            "prefill_vram_peak_mb": null,
+            "decode_rss_peak_mb": [
+              4380.2,
+              4380.2
+            ],
+            "decode_vram_peak_mb": null,
+            "decode_rss_sustained_mb": [
+              4380.2,
+              4380.2
+            ],
+            "decode_vram_sustained_mb": null
+          },
+          "sample_completions": [
+            "The Antikythera mechanism, discovered in 1901 from a Roman-era shipwreck off the Greek island of Antikythera, is an ancient analogue computer dating back to the second century BCE. Initially overlooked as a corroded lump of bronze and wood, it was later revealed to contain dozens of"
+          ]
+        },
+        {
+          "task": "summarize-medium",
+          "metrics": {
+            "cold_start_ms": null,
+            "model_load_ms": [
+              839.33,
+              839.33
+            ],
+            "context_init_ms": [
+              38.79,
+              38.79
+            ],
+            "warmup_ms": [
+              239.84,
+              239.84
+            ],
+            "ttft_ms": [
+              14502.58,
+              14502.58
+            ],
+            "decode_tps": [
+              8.25,
+              8.25
+            ],
+            "prefill_tps": [
+              61.23,
+              61.23
+            ],
+            "completion_ms": [
+              30025.81,
+              30025.81
+            ]
+          },
+          "memory": {
+            "prefill_rss_peak_mb": [
+              4482.7,
+              4482.7
+            ],
+            "prefill_vram_peak_mb": null,
+            "decode_rss_peak_mb": [
+              4482.7,
+              4482.7
+            ],
+            "decode_vram_peak_mb": null,
+            "decode_rss_sustained_mb": [
+              4482.7,
+              4482.7
+            ],
+            "decode_vram_sustained_mb": null
+          },
+          "sample_completions": [
+            "Here is a summary of the document:\n\nThe history of the lighthouse is inextricably linked to the development of maritime trade and the need to navigate hazardous waters. The concept began with simple bonfires, evolving into the massive Pharos of Alexandria, which used mirrors to amplify its light. While European lighthouse building stalled after the fall of Rome, it revived during the medieval period with crude coal fires and candles.\n\nMajor technological advancements transformed lighthouses in the 18th and 19th centuries. The introduction of oil lamps provided steadier flames, and Augustin-Jean Fresnel's revolutionary lens concentrated light"
+          ]
+        },
+        {
+          "task": "summarize-large",
+          "metrics": {
+            "cold_start_ms": null,
+            "model_load_ms": [
+              846.62,
+              846.62
+            ],
+            "context_init_ms": [
+              58.66,
+              58.66
+            ],
+            "warmup_ms": [
+              238.5,
+              238.5
+            ],
+            "ttft_ms": [
+              26289.34,
+              26289.34
+            ],
+            "decode_tps": [
+              8.14,
+              8.14
+            ],
+            "prefill_tps": [
+              60.14,
+              60.14
+            ],
+            "completion_ms": [
+              57738.68,
+              57738.68
+            ]
+          },
+          "memory": {
+            "prefill_rss_peak_mb": [
+              4674.0,
+              4674.0
+            ],
+            "prefill_vram_peak_mb": null,
+            "decode_rss_peak_mb": [
+              4674.0,
+              4674.0
+            ],
+            "decode_vram_peak_mb": null,
+            "decode_rss_sustained_mb": [
+              4674.0,
+              4674.0
+            ],
+            "decode_vram_sustained_mb": null
+          },
+          "sample_completions": [
+            "Here is a summary of the document:\n\nThe document traces the historical evolution of timekeeping from a system of **local solar time** to a unified global standard driven by the need for coordination in modern society.\n\n*   **The Problem of Local Time:** For centuries, time was determined by the position of the sun, meaning different locations had different \"noons.\" This worked for slow-moving societies but became dangerous with the advent of the **railway**, where trains traveling at high speeds required synchronized schedules to prevent collisions.\n*   **The Railway Solution:** To solve this, the railway industry imposed a single standard time. In Britain, this was **Greenwich Mean Time (GMT)**; in North America, railways created broad time zones spaced an hour apart. This marked the first time a nation (and eventually the continent) kept one clock, severing the link between time and the sun's position.\n*   **Global Standardization:** In 1884, an international conference established a single **prime meridian** at Greenwich and defined the world into 24 time zones, each 15 degrees wide. While adoption was uneven, national borders often distorted these ideal zones into irregular shapes.\n*   **Daylight Saving Time:** The document"
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "vulkan",
+      "device": "AMD Radeon 760M Graphics (RADV PHOENIX)",
+      "model": "gemma4-E2B",
+      "quant": "q4",
+      "healthy": true,
+      "vram_method": "n/a",
+      "tasks": [
+        {
+          "task": "summarize-small",
+          "metrics": {
+            "cold_start_ms": [
+              3274.99,
+              3274.99
+            ],
+            "model_load_ms": [
+              772.08,
+              782.51
+            ],
+            "context_init_ms": [
+              14.2,
+              15.74
+            ],
+            "warmup_ms": [
+              65.06,
+              76.31
+            ],
+            "ttft_ms": [
+              785.52,
+              805.18
+            ],
+            "decode_tps": [
+              23.09,
+              23.14
+            ],
+            "prefill_tps": [
+              11538.25,
+              11822.59
+            ],
+            "completion_ms": [
+              3517.02,
+              3536.14
+            ]
+          },
+          "memory": {
+            "prefill_rss_peak_mb": [
+              4072.9,
+              4072.9
+            ],
+            "prefill_vram_peak_mb": null,
+            "decode_rss_peak_mb": [
+              4072.9,
+              4072.9
+            ],
+            "decode_vram_peak_mb": null,
+            "decode_rss_sustained_mb": [
+              4072.9,
+              4072.9
+            ],
+            "decode_vram_sustained_mb": null
+          },
+          "sample_completions": [
+            "The document describes the discovery of the Antikythera mechanism, an ancient Greek device recovered in 1901 from a Roman shipwreck. Initially overlooked, researchers later used X-ray imaging and high-resolution computed tomography to reveal dozens of interlocking bronze gears housed in a wooden case.\n\nThis complex instrument modeled the"
+          ]
+        },
+        {
+          "task": "summarize-medium",
+          "metrics": {
+            "cold_start_ms": null,
+            "model_load_ms": [
+              775.86,
+              780.4
+            ],
+            "context_init_ms": [
+              19.39,
+              19.78
+            ],
+            "warmup_ms": [
+              65.65,
+              65.72
+            ],
+            "ttft_ms": [
+              1492.81,
+              1501.31
+            ],
+            "decode_tps": [
+              22.87,
+              22.96
+            ],
+            "prefill_tps": [
+              26880.41,
+              27181.87
+            ],
+            "completion_ms": [
+              7048.75,
+              7074.62
+            ]
+          },
+          "memory": {
+            "prefill_rss_peak_mb": [
+              4915.5,
+              4915.6
+            ],
+            "prefill_vram_peak_mb": null,
+            "decode_rss_peak_mb": [
+              4915.5,
+              4915.6
+            ],
+            "decode_vram_peak_mb": null,
+            "decode_rss_sustained_mb": [
+              4915.5,
+              4915.6
+            ],
+            "decode_vram_sustained_mb": null
+          },
+          "sample_completions": [
+            "This document provides a comprehensive history of the lighthouse, tracing its evolution from ancient navigational aids to modern automated beacons.\n\n**The Fundamental Purpose:**\nA lighthouse is defined as a tower fitted with a powerful light to warn ships of danger and help sailors fix their position along a coast. Its history is intrinsically linked to the history of trade, as people needed ways to mark hazardous shores and safe harbors.\n\n**Early Navigational Lights:**\nThe earliest lights were simple bonfires on high ground, establishing the basic concept of a fixed point of light. The most famous ancient example was the **Pharos of Alexandria**, a towering structure whose light"
+          ]
+        },
+        {
+          "task": "summarize-large",
+          "metrics": {
+            "cold_start_ms": null,
+            "model_load_ms": [
+              785.76,
+              832.96
+            ],
+            "context_init_ms": [
+              38.79,
+              123.54
+            ],
+            "warmup_ms": [
+              66.75,
+              67.09
+            ],
+            "ttft_ms": [
+              2856.91,
+              2876.97
+            ],
+            "decode_tps": [
+              22.53,
+              22.63
+            ],
+            "prefill_tps": [
+              39696.22,
+              40183.77
+            ],
+            "completion_ms": [
+              14177.62,
+              14259.99
+            ]
+          },
+          "memory": {
+            "prefill_rss_peak_mb": [
+              6352.2,
+              6353.9
+            ],
+            "prefill_vram_peak_mb": null,
+            "decode_rss_peak_mb": [
+              6352.3,
+              6353.9
+            ],
+            "decode_vram_peak_mb": null,
+            "decode_rss_sustained_mb": [
+              6352.2,
+              6353.9
+            ],
+            "decode_vram_sustained_mb": null
+          },
+          "sample_completions": [
+            "This document traces the evolution of timekeeping, moving from a strictly local solar system to the modern, coordinated global standard.\n\n**Early Local Time:** For most of human history, time was local, determined by the position of the Sun (sundials). Because the Sun's highest point varied by location, every town effectively kept its own clock, leading to minor discrepancies between neighboring areas.\n\n**The Breakdown and the Railway:** This local system began to fail in the 19th century with the advent of the railway. Trains required precise, shared schedules, making local solar time incompatible. To solve this, Britain adopted **Greenwich Mean Time (GMT)** as a single standard for its rail network, effectively breaking the link between local solar time and civil time.\n\n**North American Adaptation:** Similarly, the US and Canada faced challenges with varying solar times across their continent. In 1883, the railways agreed to divide the land into broad time zones, spaced roughly an hour apart, to ensure consistency.\n\n**Coordination and Technology:** Accurate time distribution was achieved through ingenious methods:\n*   **Time Balls:** Used in port cities to synchronize ships' chronometers.\n*   **Electric Telegraph:** Allowed a single master clock at an observatory to"
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "cpu",
+      "device": "AMD Ryzen 5 PRO 230 w/ Radeon 760M Graphics",
+      "model": "gemma4-E2B",
+      "quant": "q4",
+      "healthy": true,
+      "vram_method": "n/a",
+      "tasks": [
+        {
+          "task": "summarize-small",
+          "metrics": {
+            "cold_start_ms": null,
+            "model_load_ms": [
+              837.13,
+              852.65
+            ],
+            "context_init_ms": [
+              7.11,
+              7.54
+            ],
+            "warmup_ms": [
+              138.68,
+              139.41
+            ],
+            "ttft_ms": [
+              2805.68,
+              2826.77
+            ],
+            "decode_tps": [
+              15.06,
+              15.08
+            ],
+            "prefill_tps": [
+              141.88,
+              143.56
+            ],
+            "completion_ms": [
+              7050.79,
+              7189.36
+            ]
+          },
+          "memory": {
+            "prefill_rss_peak_mb": [
+              4486.7,
+              4486.8
+            ],
+            "prefill_vram_peak_mb": null,
+            "decode_rss_peak_mb": [
+              4486.7,
+              4486.8
+            ],
+            "decode_vram_peak_mb": null,
+            "decode_rss_sustained_mb": [
+              4486.7,
+              4486.8
+            ],
+            "decode_vram_sustained_mb": null
+          },
+          "sample_completions": [
+            "The document describes the discovery of the Antikythera mechanism, an ancient Greek device recovered in 1901 from a Roman shipwreck. This artifact is considered one of the world's first known analogue computers.\n\nThrough X-ray imaging and high-resolution computed tomography, researchers revealed that the mechanism consisted of"
+          ]
+        },
+        {
+          "task": "summarize-medium",
+          "metrics": {
+            "cold_start_ms": null,
+            "model_load_ms": [
+              840.42,
+              840.42
+            ],
+            "context_init_ms": [
+              6.95,
+              6.95
+            ],
+            "warmup_ms": [
+              141.9,
+              141.9
+            ],
+            "ttft_ms": [
+              6289.07,
+              6335.6
+            ],
+            "decode_tps": [
+              14.63,
+              14.66
+            ],
+            "prefill_tps": [
+              136.77,
+              137.79
+            ],
+            "completion_ms": [
+              15039.44,
+              15104.71
+            ]
+          },
+          "memory": {
+            "prefill_rss_peak_mb": [
+              4589.4,
+              4589.4
+            ],
+            "prefill_vram_peak_mb": null,
+            "decode_rss_peak_mb": [
+              4589.4,
+              4589.4
+            ],
+            "decode_vram_peak_mb": null,
+            "decode_rss_sustained_mb": [
+              4589.4,
+              4589.4
+            ],
+            "decode_vram_sustained_mb": null
+          },
+          "sample_completions": [
+            "This document provides a comprehensive history of the lighthouse, tracing its evolution from ancient navigational aids to modern automated beacons.\n\n**Key points of the summary:**\n\n* **Purpose:** Lighthouses were essential for marking hazardous shores, hidden reefs, and safe harbors, directly tying their history to the history of trade and maritime commerce.\n* **Early Navigational Lights:** The earliest forms were simple bonfires on high ground, establishing the basic concept of a fixed point of light. The most famous ancient example was the **Pharos of Alexandria**, a towering structure whose light was amplified by a mirror.\n* **Medieval Revival:** After the"
+          ]
+        },
+        {
+          "task": "summarize-large",
+          "metrics": {
+            "cold_start_ms": null,
+            "model_load_ms": [
+              853.19,
+              853.19
+            ],
+            "context_init_ms": [
+              8.8,
+              8.8
+            ],
+            "warmup_ms": [
+              142.32,
+              142.32
+            ],
+            "ttft_ms": [
+              12342.76,
+              12342.76
+            ],
+            "decode_tps": [
+              14.15,
+              14.15
+            ],
+            "prefill_tps": [
+              126.32,
+              126.32
+            ],
+            "completion_ms": [
+              30429.02,
+              30429.02
+            ]
+          },
+          "memory": {
+            "prefill_rss_peak_mb": [
+              4832.7,
+              4832.7
+            ],
+            "prefill_vram_peak_mb": null,
+            "decode_rss_peak_mb": [
+              4833.9,
+              4833.9
+            ],
+            "decode_vram_peak_mb": null,
+            "decode_rss_sustained_mb": [
+              4833.9,
+              4833.9
+            ],
+            "decode_vram_sustained_mb": null
+          },
+          "sample_completions": [
+            "This document provides a historical overview of the transition from local solar time to a standardized, global system of civil time, emphasizing the role of technology and coordination in this change.\n\n**Key Stages and Developments:**\n\n1. **Local Solar Time (Ancient to 19th Century):** For most of human history, time was strictly local, determined by the position of the Sun (noon being when the Sun was highest). This created a patchwork of time, with different towns keeping their own clocks based on local sundials. These small discrepancies were manageable in a world moving at the pace of horses and sailing ships.\n\n2. **The Breakdown (19th Century):** The invention of the railway shattered this local system. Trains required precise, common schedules, making local solar time unusable for timetables.\n\n3. **Standardization in Britain:** Britain adopted a single standard based on time kept at the Royal Observatory in Greenwich. This established the first large-scale national time, effectively breaking the ancient link between time and the Sun's position.\n\n4. **Standardization in North America:** The US and Canada faced similar issues. In 1883, the railways agreed to divide the continent into broad time zones, spaced roughly an hour apart, to ensure"
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "vulkan",
+      "device": "AMD Radeon 760M Graphics (RADV PHOENIX)",
+      "model": "gemma4-E4B",
+      "quant": "q4",
+      "healthy": true,
+      "vram_method": "n/a",
+      "tasks": [
+        {
+          "task": "summarize-small",
+          "metrics": {
+            "cold_start_ms": [
+              5768.46,
+              5768.46
+            ],
+            "model_load_ms": [
+              1120.38,
+              1132.36
+            ],
+            "context_init_ms": [
+              22.2,
+              37.19
+            ],
+            "warmup_ms": [
+              98.67,
+              98.87
+            ],
+            "ttft_ms": [
+              1694.83,
+              1701.7
+            ],
+            "decode_tps": [
+              11.94,
+              11.95
+            ],
+            "prefill_tps": [
+              5378.51,
+              5515.44
+            ],
+            "completion_ms": [
+              6975.61,
+              6982.53
+            ]
+          },
+          "memory": {
+            "prefill_rss_peak_mb": [
+              6120.2,
+              6120.7
+            ],
+            "prefill_vram_peak_mb": null,
+            "decode_rss_peak_mb": [
+              6120.2,
+              6120.8
+            ],
+            "decode_vram_peak_mb": null,
+            "decode_rss_sustained_mb": [
+              6120.2,
+              6120.7
+            ],
+            "decode_vram_sustained_mb": null
+          },
+          "sample_completions": [
+            "The Antikythera mechanism is an ancient Greek device, recovered in 1901 from a shipwreck off the island of Antikythera, that is considered the world's first known analogue computer. Initially overlooked, researchers later discovered it contained dozens of precisely cut, interlocking bronze gears housed in a wooden case"
+          ]
+        },
+        {
+          "task": "summarize-medium",
+          "metrics": {
+            "cold_start_ms": null,
+            "model_load_ms": [
+              1137.32,
+              1154.71
+            ],
+            "context_init_ms": [
+              112.48,
+              164.8
+            ],
+            "warmup_ms": [
+              98.04,
+              99.21
+            ],
+            "ttft_ms": [
+              3176.4,
+              3207.43
+            ],
+            "decode_tps": [
+              11.82,
+              11.84
+            ],
+            "prefill_tps": [
+              12278.08,
+              12341.02
+            ],
+            "completion_ms": [
+              13928.38,
+              13944.32
+            ]
+          },
+          "memory": {
+            "prefill_rss_peak_mb": [
+              6978.2,
+              6984.0
+            ],
+            "prefill_vram_peak_mb": null,
+            "decode_rss_peak_mb": [
+              6982.8,
+              6984.0
+            ],
+            "decode_vram_peak_mb": null,
+            "decode_rss_sustained_mb": [
+              6678.7,
+              6984.0
+            ],
+            "decode_vram_sustained_mb": null
+          },
+          "sample_completions": [
+            "Here is a summary of the document:\n\nThe history of the lighthouse is intrinsically linked to the need for safe maritime trade, evolving from simple warning signals to sophisticated navigational aids.\n\n**Key Stages of Development:**\n\n* **Ancient Beginnings:** The earliest lights were unreliable bonfires. The most famous ancient example was the **Pharos of Alexandria**, whose light was amplified by a mirror.\n* **Medieval Revival:** After a period of decline, lighthouse building revived during the medieval and early modern periods, with towers often maintained by local authorities. The light sources remained crude (coal or candles).\n* **Technological Leaps:** Significant"
+          ]
+        },
+        {
+          "task": "summarize-large",
+          "metrics": {
+            "cold_start_ms": null,
+            "model_load_ms": [
+              1152.11,
+              1152.11
+            ],
+            "context_init_ms": [
+              201.62,
+              201.62
+            ],
+            "warmup_ms": [
+              98.12,
+              98.12
+            ],
+            "ttft_ms": [
+              5870.77,
+              5882.1
+            ],
+            "decode_tps": [
+              11.68,
+              11.69
+            ],
+            "prefill_tps": [
+              18499.82,
+              23695.91
+            ],
+            "completion_ms": [
+              27704.0,
+              27706.58
+            ]
+          },
+          "memory": {
+            "prefill_rss_peak_mb": [
+              8439.6,
+              8439.6
+            ],
+            "prefill_vram_peak_mb": null,
+            "decode_rss_peak_mb": [
+              8439.6,
+              8439.6
+            ],
+            "decode_vram_peak_mb": null,
+            "decode_rss_sustained_mb": [
+              8246.6,
+              8246.6
+            ],
+            "decode_vram_sustained_mb": null
+          },
+          "sample_completions": [
+            "This document traces the profound historical shift in how humanity measures and understands time, moving from a purely **local, solar-based system** to a globally coordinated, standardized framework.\n\nHere is a summary of the key stages and developments:\n\n**1. The Era of Local Time (Pre-19th Century):**\n*   Time was dictated by the **Sun's position** (local solar time).\n*   Each location kept its own \"clock\" because the moment of noon varied depending on longitude.\n*   For slow-moving societies, these small local discrepancies were manageable.\n\n**2. The Catalyst for Change: The Railway (19th Century):**\n*   The advent of **high-speed railways** demanded precise, shared schedules. Local time became a deadly liability, as conflicting clocks could lead to collisions.\n*   **Britain** adopted **Greenwich Time** (from the Royal Observatory) as a single standard across its rail network, effectively breaking the ancient link between time and the Sun.\n\n**3. Continental Standardization (North America):**\n*   The vastness of the US and Canada led to even more complex local time variations.\n*   The railway industry agreed to divide the continent into **broad time"
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "cpu",
+      "device": "AMD Ryzen 5 PRO 230 w/ Radeon 760M Graphics",
+      "model": "gemma4-E4B",
+      "quant": "q4",
+      "healthy": true,
+      "vram_method": "n/a",
+      "tasks": [
+        {
+          "task": "summarize-small",
+          "metrics": {
+            "cold_start_ms": null,
+            "model_load_ms": [
+              1449.03,
+              1479.81
+            ],
+            "context_init_ms": [
+              14.94,
+              15.76
+            ],
+            "warmup_ms": [
+              261.1,
+              261.67
+            ],
+            "ttft_ms": [
+              6228.27,
+              6355.94
+            ],
+            "decode_tps": [
+              7.56,
+              7.59
+            ],
+            "prefill_tps": [
+              63.91,
+              66.55
+            ],
+            "completion_ms": [
+              14728.24,
+              14935.93
+            ]
+          },
+          "memory": {
+            "prefill_rss_peak_mb": [
+              7453.6,
+              7532.1
+            ],
+            "prefill_vram_peak_mb": null,
+            "decode_rss_peak_mb": [
+              7453.6,
+              7531.9
+            ],
+            "decode_vram_peak_mb": null,
+            "decode_rss_sustained_mb": [
+              7453.6,
+              7531.9
+            ],
+            "decode_vram_sustained_mb": null
+          },
+          "sample_completions": [
+            "The Antikythera mechanism is an ancient Greek device, recovered in 1901 from a shipwreck off the island of Antikythera, that is considered the world's first known analogue computer. Initially overlooked, researchers later discovered it contained dozens of precisely cut, interlocking bronze gears housed in a wooden case"
+          ]
+        },
+        {
+          "task": "summarize-medium",
+          "metrics": {
+            "cold_start_ms": null,
+            "model_load_ms": [
+              1412.92,
+              1412.92
+            ],
+            "context_init_ms": [
+              23.2,
+              23.2
+            ],
+            "warmup_ms": [
+              257.31,
+              257.31
+            ],
+            "ttft_ms": [
+              13253.33,
+              13253.33
+            ],
+            "decode_tps": [
+              7.44,
+              7.44
+            ],
+            "prefill_tps": [
+              64.9,
+              64.9
+            ],
+            "completion_ms": [
+              30452.14,
+              30452.14
+            ]
+          },
+          "memory": {
+            "prefill_rss_peak_mb": [
+              7679.3,
+              7679.3
+            ],
+            "prefill_vram_peak_mb": null,
+            "decode_rss_peak_mb": [
+              7682.4,
+              7682.4
+            ],
+            "decode_vram_peak_mb": null,
+            "decode_rss_sustained_mb": [
+              7682.4,
+              7682.4
+            ],
+            "decode_vram_sustained_mb": null
+          },
+          "sample_completions": [
+            "Here is a summary of the document:\n\nThe history of the lighthouse is intrinsically linked to the history of maritime trade, serving as a vital warning system and navigational aid for sailors. Early lights were simple, unreliable bonfires, but the ancient **Pharos of Alexandria** established the concept of a fixed, powerful light.\n\nAfter a period of decline, lighthouse building revived during the medieval and early modern eras, with lights often maintained by local authorities. Significant advancements occurred with new technology:\n*   **18th Century:** The introduction of brighter, steadier **oil lamps** and polished reflectors.\n*   **19th"
+          ]
+        },
+        {
+          "task": "summarize-large",
+          "metrics": {
+            "cold_start_ms": null,
+            "model_load_ms": [
+              1143.61,
+              1143.61
+            ],
+            "context_init_ms": [
+              15.79,
+              15.79
+            ],
+            "warmup_ms": [
+              267.2,
+              267.2
+            ],
+            "ttft_ms": [
+              24633.56,
+              24633.56
+            ],
+            "decode_tps": [
+              7.25,
+              7.25
+            ],
+            "prefill_tps": [
+              63.29,
+              63.29
+            ],
+            "completion_ms": [
+              59959.79,
+              59959.79
+            ]
+          },
+          "memory": {
+            "prefill_rss_peak_mb": [
+              7977.5,
+              7977.5
+            ],
+            "prefill_vram_peak_mb": null,
+            "decode_rss_peak_mb": [
+              7978.8,
+              7978.8
+            ],
+            "decode_vram_peak_mb": null,
+            "decode_rss_sustained_mb": [
+              7978.8,
+              7978.8
+            ],
+            "decode_vram_sustained_mb": null
+          },
+          "sample_completions": [
+            "Here is a summary of the document:\n\nThe document traces the profound historical shift in how humanity measures and understands time, moving from a **strictly local, solar-based system** to a **globally coordinated, standardized system**.\n\n**Early Time (Local Solar Time):**\nFor most of human history, time was determined by the Sun's position overhead. Because the Sun's highest point (noon) varied by location, every town effectively kept its own \"local clock,\" and small discrepancies were manageable for a slow-moving society.\n\n**The Catalyst for Change (The Railway):**\nThe invention and expansion of the railway in the 19th century shattered this local system. Fast-moving trains required precise, shared schedules, making the chaos of multiple local times deadly and impractical.\n\n**The Standardization Process:**\n1. **Britain:** The railway industry imposed a single standard\u2014**Greenwich Time**\u2014across the entire network, effectively breaking the ancient link between the hour and the Sun's position.\n2. **North America:** Due to its vast size, the US and Canada adopted a system of **time zones** (roughly one hour apart) to manage the massive variation in solar time across the continent.\n3. **Global"
+          ]
+        }
+      ]
+    }
+  ]
+}
