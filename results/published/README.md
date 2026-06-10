@@ -31,7 +31,9 @@ local and gitignored; this folder is the exception.
 `report.html` is the code-free static export of `analysis/report.py` over this
 folder — every chart and number in it is computed from the submissions below
 it, so it is regenerated (step 3) whenever one lands. Self-contained: open it
-anywhere, no environment needed.
+anywhere, no environment needed. On every push to `main` it is also served as
+the repo's GitHub Pages site (`.github/workflows/pages.yml` — CI only
+publishes the committed file, it never regenerates it).
 
 ## Layout
 

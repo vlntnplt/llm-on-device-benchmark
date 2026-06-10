@@ -1,0 +1,35 @@
+# Publish the committed benchmark report (results/published/report.html) as the
+# GitHub Pages site. The report is regenerated locally as part of the submission
+# flow; this workflow only serves the committed file as index.html.
+# One-time setup: repo Settings → Pages → Source: "GitHub Actions".
+name: pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Stage the report as the site root
+        run: mkdir -p _site && cp results/published/report.html _site/index.html
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4

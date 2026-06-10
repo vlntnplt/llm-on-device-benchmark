@@ -57,7 +57,9 @@ optionally `third_party/` (local stack checkouts for offline builds or hacking
 
 3. **Compare** — load one or many machines' results with the separate
    [`analysis/`](analysis/README.md) project; share a run via
-   [`bench publish`](results/published/README.md).
+   [`bench publish`](results/published/README.md). The report over the
+   published submissions (`results/published/report.html`) is served as the
+   repo's GitHub Pages site.
 
 ## Adding a backend
 
