@@ -1,0 +1,36 @@
+# Timed task catalog. The summarize family sweeps PREFILL cost across a
+# 4x-growing prompt at a modest decode budget. Every task is single-turn — one assistant
+# turn to generate.
+#
+# Authoring form notes:
+#   - An assistant turn carries NO content; it is a turn to GENERATE exactly
+#     `nb_tokens` tokens (greedy, EOS ignored), optionally with an `expect` list.
+#   - A user turn's content may be `{document: corpora/<file>}`; the harness inlines
+#     the text and trims it so prompt + decode stays under `max_context_length`.
+#     (Token counts are approximate — each backend tokenizes with its own tokenizer.)
+#   - The summarize family is open-ended, so it carries NO `expect`: we do not gate
+#     timing data on whether a sub-3B model writes a good summary.
+
+- name: summarize-small        # ~400 prompt tokens
+  max_context_length: 512
+  messages:
+    - {role: system, content: "You are a helpful assistant."}
+    - {role: user, content: {document: corpora/antikythera.txt}}
+    - {role: user, content: "Summarize the document."}
+    - {role: assistant, nb_tokens: 64}
+
+- name: summarize-medium       # ~850 prompt tokens
+  max_context_length: 1024
+  messages:
+    - {role: system, content: "You are a helpful assistant."}
+    - {role: user, content: {document: corpora/lighthouses.txt}}
+    - {role: user, content: "Summarize the document."}
+    - {role: assistant, nb_tokens: 128}
+
+- name: summarize-large        # ~1700 prompt tokens
+  max_context_length: 2048
+  messages:
+    - {role: system, content: "You are a helpful assistant."}
+    - {role: user, content: {document: corpora/standard-time.txt}}
+    - {role: user, content: "Summarize the document."}
+    - {role: assistant, nb_tokens: 256}
