@@ -1,0 +1,28 @@
+# ─── Local data; never tracked (see README "What you provide") ───
+# Optional local stack checkouts: backends fetch their pinned deps at build time;
+# point one at a clone here via its *_SOURCE_DIR override (or keep as reference).
+third_party/
+# Model vaults: multi-GB; fetch the ones you want with `bench fetch`.
+models/
+
+# ─── Backend build outputs (sources tracked, artifacts not) ───
+backends/*/build/
+backends/transformersjs/node_modules/
+backends/transformersjs/dist/
+
+# ─── Runner (uv) ───
+harness/.venv/
+.venv/
+__pycache__/
+*.pyc
+analysis/__marimo__/   # marimo session cache
+
+# ─── Results — generated & local; keep only published submissions ───
+results/*
+!results/published/
+
+# ─── Editor / OS ───
+.DS_Store
+
+# Agentic scratchpad
+artifacts/
