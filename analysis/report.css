@@ -24,6 +24,57 @@
    resolved theme is dark (`[tool.marimo.display] theme` in pyproject.toml), and
    it renders outputs into a shadow root that page CSS cannot reach anyway. */
 
+/* ── Prose measure ────────────────────────────────────────────────────────────
+   The app is laid out wide enough for the charts, which leaves the text running
+   the full width — a long line is hard to track back to the next one. Cap the
+   running text (not tables or charts, which need the room) and close the leading
+   marimo's prose default opens up. */
+.markdown p,
+.markdown li,
+.markdown blockquote,
+.markdown h1,
+.markdown h2,
+.markdown h3 {
+  max-width: 64ch;
+}
+
+.markdown p,
+.markdown li {
+  line-height: 1.5;
+}
+
+.markdown li + li,
+.markdown p + p {
+  margin-top: 0.5em;
+}
+
+/* One completion per task, folded away until asked for. <details> is native, so
+   it opens with no runtime behind it. */
+.sample-completions {
+  max-width: 64ch;
+  margin: 0.5rem 0 1rem;
+  font-size: 0.875rem;
+}
+
+.sample-completions summary {
+  cursor: pointer;
+  color: var(--sw-fg);
+}
+
+.sample-completions blockquote {
+  margin: 0.5rem 0 0.9rem;
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--sw-border);
+  color: var(--sw-fg);
+}
+
+.sample-completions .who {
+  display: block;
+  font-size: 0.8125rem;
+  color: var(--sw-muted);
+  margin-bottom: 0.15rem;
+}
+
 /* ── Static switchers ─────────────────────────────────────────────────────────
    Radios are visually hidden but still focusable, so the tabs stay keyboard- and
    screen-reader-navigable. Per-group rules (which panel to reveal, which label to

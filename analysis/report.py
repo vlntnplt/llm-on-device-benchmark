@@ -62,12 +62,35 @@ def _(mo):
     - **tjs** — [Transformers.js](https://github.com/huggingface/transformers.js)
       running ONNX models on onnxruntime-node.
 
-    Each measurement launches a fresh process, loads the model, feeds it a
-    summarization prompt, and greedily decodes a fixed number of tokens. The
-    prompt comes in three sizes — roughly 400, 850, and 1700 tokens — so each
-    chart can show how cost grows with context. A **config** is one way of
-    running a model: a machine, a backend, a compute provider (`cpu`, `cuda`,
-    `metal`, …), and a quantization.
+    Each measurement launches a fresh process, loads the model, runs one task,
+    and exits. A **config** is one way of running a model: a machine, a
+    backend, a compute provider (`cpu`, `cuda`, `metal`, …), and a
+    quantization.
+
+    ### The task
+
+    Every task is a single turn of the same shape: a short system prompt, a
+    document, and `Summarize the document.` The model then decodes **greedily,
+    to a fixed token count, with EOS ignored** — so every config does exactly
+    the same amount of work, and a fast config cannot win by stopping early.
+    Prompts are rendered through each model's own chat template with reasoning
+    off, never by pasting role labels together.
+
+    Three sizes sweep the prompt across roughly 4×, with the decode budget
+    growing alongside it, so the charts can separate the cost of *reading* from
+    the cost of *writing*:
+
+    | task | document | prompt | tokens generated |
+    |---|---|---|---|
+    | `summarize-small` | the Antikythera mechanism | ~400 | 64 |
+    | `summarize-medium` | lighthouses | ~850 | 128 |
+    | `summarize-large` | the coming of standard time | ~1700 | 256 |
+
+    The summaries are never graded — a timing benchmark should not depend on
+    whether a 4B model writes well. What *is* gated is coherence: before any
+    timed run, a config has to answer three trivial questions correctly, and
+    one that fails is reported as `unhealthy` rather than timed. Sampled output
+    from the runs below:
 
     Two reading notes. A quantization *label* is not the same math in both
     stacks (`ggml q4` is Q4_K_M, `tjs q4` is MatMulNBits), so comparisons hold
@@ -75,6 +98,28 @@ def _(mo):
     including the ones in the text — is computed from the published submissions
     in `results/published/`, so the prose updates as new runs land.
     """)
+    return
+
+
+@app.cell
+def _(mo, ok, task_order):
+    # The harness keeps one decoded completion per cell so a run stays
+    # eyeball-inspectable — proof the timings came off a model that was
+    # actually writing, not emitting filler at speed.
+    import html as _html
+
+    def _quote(task):
+        _s = ok[(ok.task == task) & ok.sample_completion.notna()]
+        if not len(_s):
+            return ""
+        _r = _s.iloc[0]
+        _who = f"{task} — {_r.machine} · {_r.backend} · {_r.model} {_r.quant}"
+        return (f'<blockquote><span class="who">{_html.escape(_who)}</span>'
+                f'{_html.escape(str(_r.sample_completion).strip())}</blockquote>')
+
+    mo.Html('<details class="sample-completions">'
+            '<summary>three generated summaries, one per size</summary>'
+            + "".join(_quote(_t) for _t in task_order) + "</details>")
     return
 
 
