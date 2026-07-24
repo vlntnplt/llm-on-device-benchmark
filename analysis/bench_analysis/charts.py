@@ -19,6 +19,8 @@ just composes them. Only the notebook imports this module (altair lives in the
 
 from __future__ import annotations
 
+import math
+
 import altair as alt
 import pandas as pd
 
@@ -26,6 +28,10 @@ from . import prep
 
 ACCENT = "#1e8e3e"   # the only green anywhere: a measured win / ok
 MUTED = "#8a939b"    # secondary labels, reference rules
+# Ink for numbers the reader is meant to read off a mark. Mid-range on purpose:
+# a chart is rendered once and has to hold up on a light and a dark page, so
+# this trades a little contrast on each for being legible on both.
+INK = "#6f7883"
 
 BACKEND_COLORS = {"ggml": "#2a9d8f", "tjs": "#e8913a"}
 STATUS_COLORS = {"ok": ACCENT, "too_slow": "#b45309",
@@ -41,6 +47,24 @@ MEMORY_COLORS = dict(zip(prep.MEMORY_PHASES,
 CPU_GPU_COLORS = {"gpu": "#2a9d8f", "cpu": "#64748b"}
 
 _DNF_COLORS = {v: STATUS_COLORS[k] for k, v in prep.FAIL_LABELS.items()}
+
+
+def _log_ticks(values: pd.Series, *extra: float | None) -> list[float] | None:
+    """Ticks at 1-2-5 per decade over the data's range.
+
+    A log axis defaults to a line at every integer, which on a two-decade span
+    is a picket fence behind the marks. Anchoring to 1-2-5 keeps a reader's
+    sense of scale with a third of the lines."""
+    pool = [v for v in [*values.dropna(), *extra] if v is not None and v > 0]
+    if not pool:
+        return None
+    lo, hi = min(pool), max(pool)
+    ticks, decade = [], math.floor(math.log10(lo))
+    while 10**decade <= hi:
+        ticks += [m * 10**decade for m in (1, 2, 5)]
+        decade += 1
+    inside = [t for t in ticks if lo / 2 <= t <= hi * 2]
+    return inside or None
 
 
 def _themed(chart: alt.Chart) -> alt.Chart:
@@ -183,28 +207,40 @@ def status_bars(cells: pd.DataFrame) -> alt.Chart:
     return _themed((bars + labels).properties(width=420, height=24 * len(who_order)))
 
 
-def dumbbell(best: pd.DataFrame, task_order: list[str], caption: str, *,
+def dumbbell(best: pd.DataFrame, caption: str, *,
              row: str = "lane", value: str = "total_s",
-             value_title: str = "total (s)", width: int = 125,
+             value_title: str = "total (s)", width: int = 470,
              y: str = "model", y_sort: list[str] | None = None,
              hue: str = "backend", colors: dict[str, str] | None = None,
              ref_x: float | None = None) -> alt.Chart:
     """A head-to-head (from a `prep` matchup frame): one dot per `hue` value on
-    a log axis, faceted `row` × task, the gap labelled ×heavy/light. Cells
-    where only one side produced a sample get no gap label — that's a walkover,
-    not a tie. `ref_x` draws a dashed reference rule (e.g. the 1 s line)."""
+    a log axis, faceted by `row`, the gap labelled ×heavy/light. Cells where
+    only one side produced a sample get no gap label — that's a walkover, not a
+    tie. `ref_x` draws a dashed reference rule (e.g. the 1 s line).
+
+    One task per chart: a log axis needs the width to stay readable, and three
+    of them side by side left each too narrow to label. The report renders one
+    per context size and switches between them.
+    """
     colors = colors or BACKEND_COLORS
     dom = sorted(best[hue].unique())
     y_enc = alt.Y(f"{y}:N", title=None, sort=y_sort)
     base = alt.Chart(best).transform_calculate(gap="'×' + format(datum.ratio, '.1f')")
 
-    rule = base.mark_rule(color="#cbd2d9", strokeWidth=2).encode(
+    # The connector carries the gap, but it sits behind the dots and the ×label:
+    # faint enough to read as "these two belong together" without competing with
+    # the text on top. Opacity rather than a fixed grey so it recedes the same
+    # amount whichever theme the reader is on.
+    rule = base.mark_rule(color=MUTED, strokeWidth=2.5, opacity=0.25).encode(
         y=y_enc, x="lo:Q", x2="hi:Q")
-    pts = base.mark_point(filled=True, size=90).encode(
+    pts = base.mark_point(filled=True, size=110).encode(
         y=y_enc,
         x=alt.X(f"{value}:Q", title=None,
-                scale=alt.Scale(type="log", nice=False, padding=12),
-                axis=alt.Axis(format="~r")),
+                # Enough slack at the top end that the ×label on the rightmost
+                # dot lands inside the panel instead of over its border.
+                scale=alt.Scale(type="log", nice=False, padding=46),
+                axis=alt.Axis(format="~r", values=_log_ticks(best[value], ref_x),
+                              gridOpacity=0.25)),
         color=alt.Color(f"{hue}:N", title=None,
                         scale=alt.Scale(domain=dom,
                                         range=[colors.get(b, MUTED) for b in dom]),
@@ -213,9 +249,13 @@ def dumbbell(best: pd.DataFrame, task_order: list[str], caption: str, *,
                                              "provider", "quant"]) if c in best.columns),
                  alt.Tooltip(f"{value}:Q", title=value_title, format=".1f")],
     )
+    # The gap multiplier is a number to read, not chrome: it gets ink strong
+    # enough to separate from the connector behind it. INK sits mid-range on
+    # purpose — one rendering has to hold up on a light and a dark page.
     gap = base.transform_filter(
         f"datum.n_backends >= 2 && datum.{value} >= datum.hi"
-    ).mark_text(align="left", dx=9, color=MUTED, fontWeight="bold").encode(
+    ).mark_text(align="left", dx=10, color=INK, fontWeight="bold",
+                fontSize=12).encode(
         y=y_enc, x=f"{value}:Q", text="gap:N")
     layers = [rule, pts, gap]
     if ref_x is not None:
@@ -224,13 +264,12 @@ def dumbbell(best: pd.DataFrame, task_order: list[str], caption: str, *,
 
     # Row facet labels are rotated 90° by default — silicon names overlap.
     # Lay them flat; the wider left gutter is worth it. The right padding is
-    # headroom for the last column's gap labels, which hang past the hi dot.
+    # headroom for the gap labels, which hang past the hi dot.
     return _themed(_captioned(
-        alt.layer(*layers).properties(width=width, height=alt.Step(26)).facet(
+        alt.layer(*layers).properties(width=width, height=alt.Step(30)).facet(
             row=alt.Row(f"{row}:N", title=None,
-                        header=alt.Header(labelAngle=0, labelAlign="left", labelLimit=230)),
-            column=alt.Column("task:N", title=None, sort=task_order)),
-        caption).properties(padding={"left": 5, "top": 5, "bottom": 5, "right": 42}))
+                        header=alt.Header(labelAngle=0, labelAlign="left", labelLimit=230))),
+        caption).properties(padding={"left": 5, "top": 5, "bottom": 5, "right": 12}))
 
 
 def coverage(df: pd.DataFrame):

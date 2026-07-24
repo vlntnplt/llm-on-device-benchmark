@@ -355,7 +355,8 @@ def _(h2h_gap, h2h_note, h2h_providers, h2h_table, mo):
     model format, kernels — not the machine. Each dot is that backend's
     fastest config for the model and prompt size; the small label on the
     right is the gap as a multiplier. The axis is logarithmic, so equal
-    distances are equal *ratios* wherever they appear. {h2h_gap}
+    distances are equal *ratios* wherever they appear. The tabs switch the
+    prompt size. {h2h_gap}
 
     Averaged over the cells where both backends answered (models × prompt
     sizes), split by the kind of silicon:
@@ -375,11 +376,15 @@ def _(h2h_gap, h2h_note, h2h_providers, h2h_table, mo):
 
 
 @app.cell
-def _(charts, lane_t, task_order):
-    charts.dumbbell(
-        lane_t[lane_t.n_backends >= 2], task_order,
-        "total time to a finished answer (s, log) — "
-        "each backend's fastest config per lane")
+def _(charts, lane_t, mo, switcher, task_order):
+    _m = lane_t[lane_t.n_backends >= 2]
+    mo.Html(switcher.tabs({
+        _t: mo.as_html(charts.dumbbell(
+            _m[_m.task == _t],
+            f"{_t}: total time to a finished answer (s, log) — "
+            "each backend's fastest config per lane")).text
+        for _t in task_order
+    }, group="h2h-time", active=task_order[len(task_order) // 2]))
     return
 
 
@@ -395,12 +400,16 @@ def _(h2h_mem, mo):
 
 
 @app.cell
-def _(charts, lane_m, task_order):
-    charts.dumbbell(
-        lane_m[lane_m.n_backends >= 2], task_order,
-        "peak footprint (GB, log) — high-water RAM+VRAM across prefill and "
-        "decode, each backend's lightest config per lane",
-        value="peak_gb", value_title="peak (GB)")
+def _(charts, lane_m, mo, switcher, task_order):
+    _m = lane_m[lane_m.n_backends >= 2]
+    mo.Html(switcher.tabs({
+        _t: mo.as_html(charts.dumbbell(
+            _m[_m.task == _t],
+            f"{_t}: peak footprint (GB, log) — high-water RAM+VRAM across "
+            "prefill and decode, each backend's lightest config per lane",
+            value="peak_gb", value_title="peak (GB)")).text
+        for _t in task_order
+    }, group="h2h-mem", active=task_order[len(task_order) // 2]))
     return
 
 
@@ -457,17 +466,20 @@ def _(gvc_asym, gvc_table, mo):
 
 
 @app.cell
-def _(charts, ok, prep, task_order):
+def _(charts, mo, ok, prep, switcher, task_order):
     fc = prep.fallback_cost(ok)
     _ysort = [f"{_m} · {_p}" for _m in sorted(fc.model.unique())
               for _p in ("TTFT", "decode")]
-    charts.dumbbell(
-        fc, task_order,
-        "the fallback tax (s, log) — TTFT and decode time per turn, "
-        "cpu vs gpu; dashed = 1 s",
-        row="machine", value="seconds", value_title="time (s)", width=98,
-        y="leg", y_sort=_ysort, hue="side", colors=charts.CPU_GPU_COLORS,
-        ref_x=1.0)
+    mo.Html(switcher.tabs({
+        _t: mo.as_html(charts.dumbbell(
+            fc[fc.task == _t],
+            f"{_t}: the fallback tax (s, log) — TTFT and decode time per "
+            "turn, cpu vs gpu; dashed = 1 s",
+            row="machine", value="seconds", value_title="time (s)", width=420,
+            y="leg", y_sort=_ysort, hue="side", colors=charts.CPU_GPU_COLORS,
+            ref_x=1.0)).text
+        for _t in task_order
+    }, group="fallback", active=task_order[len(task_order) // 2]))
     return
 
 

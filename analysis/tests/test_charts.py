@@ -45,11 +45,11 @@ def test_every_builder_emits_a_spec(prepared):
                        dnf=prep.failures(df[df.task == "summarize-small"])),
         charts.stacked(prep.memory_phases(sliced), charts.MEMORY_COLORS, "t"),
         charts.status_bars(prep.status_cells(df)),
-        charts.dumbbell(prep.best_of_backend(ok), task_order, "t", row="machine"),
-        charts.dumbbell(prep.lane_time(ok), task_order, "t"),
-        charts.dumbbell(prep.lane_memory(ok), task_order, "t",
+        charts.dumbbell(prep.best_of_backend(ok), "t", row="machine"),
+        charts.dumbbell(prep.lane_time(ok), "t"),
+        charts.dumbbell(prep.lane_memory(ok), "t",
                         value="peak_gb", value_title="peak (GB)"),
-        charts.dumbbell(prep.fallback_cost(ok), task_order, "t",
+        charts.dumbbell(prep.fallback_cost(ok), "t",
                         row="machine", value="seconds", y="leg", hue="side",
                         colors=charts.CPU_GPU_COLORS, ref_x=1.0),
     ]
@@ -67,3 +67,21 @@ def test_coverage_styler_renders(prepared):
     df, _ = prepared
     html = charts.coverage(df).to_html()
     assert "background-color" in html
+
+
+def test_log_ticks_anchor_to_1_2_5_per_decade():
+    ticks = charts._log_ticks(pd.Series([1.2, 47.0]))
+    assert ticks == [1, 2, 5, 10, 20, 50]
+
+
+def test_log_ticks_span_the_reference_rule_too():
+    # §5 draws a dashed rule at 1 s; the axis has to reach it even when every
+    # sample sits above.
+    assert 1 in charts._log_ticks(pd.Series([4.0, 9.0]), 1.0)
+
+
+def test_log_ticks_ignore_nan_and_nonpositive():
+    # A log axis has nothing to say about 0 or NaN; 3.0 is the only real value,
+    # so the kept ticks are the 1-2-5 steps within a factor of two of it.
+    assert charts._log_ticks(pd.Series([math.nan, 0.0, 3.0])) == [2, 5]
+    assert charts._log_ticks(pd.Series([math.nan])) is None
