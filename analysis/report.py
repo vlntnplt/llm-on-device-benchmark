@@ -112,8 +112,8 @@ def _(Path, load_results, mo, pd, prep):
 def _(mo, switcher):
     # tjs is slow and heavy enough to set the scale in §1 and §2, compressing the
     # ggml configs against the axis. This drops it from those charts so the
-    # remaining spread is readable. §4 and §5 are unaffected — they exist to
-    # compare the two backends, so there is nothing there to filter.
+    # remaining spread is readable, and takes §4 with it — that section is the
+    # backend comparison, so without tjs there is nothing left of it to show.
     mo.Html(switcher.backend_filter())
     return
 
@@ -145,8 +145,8 @@ def _(mo):
     overall rank), so a config stays on its row while you flip between sizes —
     which can read slightly off a single tab's exact ranking. A stacked axis
     can't be log-scaled, so slow configs visually compress fast ones; the
-    labels carry the exact totals, and §4 is the log-scale view where the
-    small gaps become readable.
+    labels carry the exact totals<span data-backend="all">, and §4 is the
+    log-scale view where the small gaps become readable</span>.
     """)
     return
 
@@ -193,8 +193,8 @@ def _(mo):
     example a provider that compiles kernels during the first full-context
     prefill. A missing VRAM segment means the provider has no separate VRAM
     pool to report (CPU runs, unified memory), not missing data. Prefill
-    itself can peak higher than decode; §4's footprint view uses the
-    high-water mark across both phases.
+    itself can peak higher than decode<span data-backend="all">; §4's
+    footprint view uses the high-water mark across both phases</span>.
     """)
     return
 
@@ -227,26 +227,33 @@ def _(df, prep):
     counts = prep.status_cells(df)
     n_machines = df.machine.nunique()
 
-    _lines = []
-    for _b, _sub in counts.groupby("backend"):
-        _tasked = _sub[_sub.status != "unhealthy"]
-        _ok_n, _n = int(_tasked[_tasked.status == "ok"].n.sum()), int(_tasked.n.sum())
-        _miss = _tasked[_tasked.status != "ok"]
-        _miss_txt = ("; misses: " + ", ".join(
-            f"{r.n}× {r.provider} {r.status.replace('_', ' ')}"
-            for r in _miss.itertuples())) if len(_miss) else ""
-        _lines.append(f"- **{_b}: {_ok_n}/{_n} cells ok**{_miss_txt}.")
-    _unh = counts[counts.status == "unhealthy"]
-    if len(_unh):
-        _lines.append("- failed the brain-check (tasks never ran): " + ", ".join(
-            f"{r.n}× {r.who}" for r in _unh.itertuples()) + ".")
-    reliability = "\n".join(_lines)
-    return counts, n_machines, reliability
+    def _tally(_counts):
+        _lines = []
+        for _b, _sub in _counts.groupby("backend", observed=True):
+            _tasked = _sub[_sub.status != "unhealthy"]
+            _ok_n, _n = int(_tasked[_tasked.status == "ok"].n.sum()), int(_tasked.n.sum())
+            _miss = _tasked[_tasked.status != "ok"]
+            _miss_txt = ("; misses: " + ", ".join(
+                f"{r.n}× {r.provider} {r.status.replace('_', ' ')}"
+                for r in _miss.itertuples())) if len(_miss) else ""
+            _lines.append(f"- **{_b}: {_ok_n}/{_n} cells ok**{_miss_txt}.")
+        _unh = _counts[_counts.status == "unhealthy"]
+        if len(_unh):
+            _lines.append("- failed the brain-check (tasks never ran): " + ", ".join(
+                f"{r.n}× {r.who}" for r in _unh.itertuples()) + ".")
+        return "\n".join(_lines)
+
+    # A tally per filter state: a tjs row under a ggml-only chart would be a
+    # number the reader cannot see the source of.
+    reliability = _tally(counts)
+    reliability_ggml = _tally(counts[counts.backend == "ggml"])
+    return counts, n_machines, reliability, reliability_ggml
 
 
 @app.cell
-def _(mo, n_machines, reliability):
-    mo.md(f"""
+def _(mo, n_machines, reliability, reliability_ggml, switcher):
+    def _section3(tally):
+        return mo.as_html(mo.md(f"""
     ## 3 · Backend reliability across machines
 
     Speed only matters if a config produces an answer at all. Same models,
@@ -257,8 +264,10 @@ def _(mo, n_machines, reliability):
     floor), `errored` (crashed or ran out of memory). Configs that failed the
     three-question sanity gate are listed apart — their timed cells never ran.
 
-    {reliability}
-    """)
+    {tally}
+    """)).text
+
+    mo.Html(switcher.variants(_section3(reliability), _section3(reliability_ggml)))
     return
 
 
@@ -345,8 +354,8 @@ def _(df, ok, prep):
 
 
 @app.cell
-def _(h2h_gap, h2h_note, h2h_providers, h2h_table, mo):
-    mo.md(f"""
+def _(h2h_gap, h2h_note, h2h_providers, h2h_table, mo, switcher):
+    mo.Html(switcher.only_with_tjs(mo.as_html(mo.md(f"""
     ## 4 · ggml vs tjs, lane by lane
 
     A **lane** is one piece of silicon: a machine's CPU, or its GPU. Within a
@@ -371,45 +380,45 @@ def _(h2h_gap, h2h_note, h2h_providers, h2h_table, mo):
     {h2h_providers}
 
     {h2h_note}
-    """)
+    """)).text))
     return
 
 
 @app.cell
 def _(charts, lane_t, mo, switcher, task_order):
     _m = lane_t[lane_t.n_backends >= 2]
-    mo.Html(switcher.tabs({
+    mo.Html(switcher.only_with_tjs(switcher.tabs({
         _t: mo.as_html(charts.dumbbell(
             _m[_m.task == _t],
             f"{_t}: total time to a finished answer (s, log) — "
             "each backend's fastest config per lane")).text
         for _t in task_order
-    }, group="h2h-time", active=task_order[len(task_order) // 2]))
+    }, group="h2h-time", active=task_order[len(task_order) // 2])))
     return
 
 
 @app.cell
-def _(h2h_mem, mo):
-    mo.md(f"""
+def _(h2h_mem, mo, switcher):
+    mo.Html(switcher.only_with_tjs(mo.as_html(mo.md(f"""
     The same lanes, by **peak footprint** — the highest RAM+VRAM the run
     touched across prefill *and* decode, transient spikes included: the
     memory a device must actually have free to run the config at all. Dots
     are each backend's lightest config. {h2h_mem}
-    """)
+    """)).text))
     return
 
 
 @app.cell
 def _(charts, lane_m, mo, switcher, task_order):
     _m = lane_m[lane_m.n_backends >= 2]
-    mo.Html(switcher.tabs({
+    mo.Html(switcher.only_with_tjs(switcher.tabs({
         _t: mo.as_html(charts.dumbbell(
             _m[_m.task == _t],
             f"{_t}: peak footprint (GB, log) — high-water RAM+VRAM across "
             "prefill and decode, each backend's lightest config per lane",
             value="peak_gb", value_title="peak (GB)")).text
         for _t in task_order
-    }, group="h2h-mem", active=task_order[len(task_order) // 2]))
+    }, group="h2h-mem", active=task_order[len(task_order) // 2])))
     return
 
 
@@ -439,8 +448,11 @@ def _(ok, prep):
 
 @app.cell
 def _(gvc_asym, gvc_table, mo):
+    # §4 is hidden once tjs is filtered out, so this section closes the gap and
+    # becomes §4 — a report that jumps from 3 to 5 reads as a rendering bug.
+    _n = '<span data-backend="all">5</span><span data-backend="ggml">4</span>'
     mo.md(f"""
-    ## 5 · ggml: GPU vs CPU on the same silicon
+    ## {_n} · ggml: GPU vs CPU on the same silicon
 
     On the machines that have both, what does running on the CPU instead of
     the GPU cost? The two generation phases stress different parts of the
@@ -456,8 +468,8 @@ def _(gvc_asym, gvc_table, mo):
     |---|---|---|---|---|
     {gvc_table}
 
-    Below, the same comparison in absolute seconds, in §4's dumbbell
-    language: per model, one dumbbell for time-to-first-token and one for
+    Below, the same comparison in absolute seconds, as a dumbbell per model:
+    one for time-to-first-token and one for
     decode time — **slate** cpu, **teal** gpu. The dashed rule marks one
     second, a common responsiveness reference: where a dot sits against it
     is what a user actually waits.

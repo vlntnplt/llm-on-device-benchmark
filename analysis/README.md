@@ -72,8 +72,14 @@ kernel"*. Everything switchable is therefore pre-rendered and revealed by CSS:
   scale in §1 and §2, compressing the ggml configs against the axis; dropping it
   makes the remaining spread readable. Both states are rendered in Python
   because row order, axis scale, and the per-model winner are computed over the
-  rows a chart shows. §4 and §5 ignore the switch — they exist to compare the
-  two backends.
+  rows a chart shows.
+
+Filtering tjs out also removes what only existed to compare against it: §4 is
+the backend comparison, so it is hidden whole (`switcher.only_with_tjs`), §3's
+tally drops its tjs row, and the sentences elsewhere that point at §4 are
+wrapped in `<span data-backend="all">` — markdown keeps inline HTML, so a
+dangling clause costs a span rather than a duplicated cell. §5 renumbers itself
+to 4 in that state, since a report jumping from 3 to 5 reads as a bug.
 
 The export also follows the reader's OS light/dark preference, from
 `[tool.marimo.display] theme = "system"` in `pyproject.toml`. That setting is

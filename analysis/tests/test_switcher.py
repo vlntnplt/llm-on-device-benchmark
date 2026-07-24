@@ -83,3 +83,17 @@ def test_no_marimo_ui_element_is_produced():
     html = switcher.tabs({"a": "x"}, group="g") + switcher.backend_filter()
     assert "marimo-ui-element" not in html
     assert "marimo-tabs" not in html
+
+
+def test_only_with_tjs_tags_content_for_the_all_state():
+    assert switcher.only_with_tjs("<h2>4</h2>") == '<div data-backend="all"><h2>4</h2></div>'
+
+
+def test_only_with_tjs_is_hidden_by_the_same_rule_variants_use():
+    from pathlib import Path
+
+    css = (Path(__file__).resolve().parents[1] / "report.css").read_text()
+    # One rule drives both: whatever hides a variants() "all" branch also hides
+    # a section wrapped by only_with_tjs.
+    assert '#backend-ggml:checked) [data-backend="all"]' in css
+    assert 'data-backend="all"' in switcher.only_with_tjs("x")

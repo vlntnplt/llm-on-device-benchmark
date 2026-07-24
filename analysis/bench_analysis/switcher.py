@@ -15,7 +15,7 @@ scoped `<style>`; the shared look lives in `report.css`.
 
 import re
 
-__all__ = ["BACKEND_GROUP", "backend_filter", "slug", "tabs", "variants"]
+__all__ = ["BACKEND_GROUP", "backend_filter", "only_with_tjs", "slug", "tabs", "variants"]
 
 # The global backend filter's radio ids are referenced by static rules in
 # report.css, so they are fixed here rather than generated.
@@ -85,6 +85,17 @@ def variants(both: str, ggml_only: str) -> str:
         f'<div data-backend="all">{both}</div>'
         f'<div data-backend="ggml">{ggml_only}</div>'
     )
+
+
+def only_with_tjs(html: str) -> str:
+    """Hide content once the reader filters tjs out.
+
+    For whole sections that exist to compare the two backends — with tjs gone
+    there is no comparison left to show, only a heading over an empty chart.
+    Markdown keeps inline HTML, so a dangling cross-reference inside a sentence
+    can wear `<span data-backend="all">` directly instead of splitting the cell.
+    """
+    return f'<div data-backend="all">{html}</div>'
 
 
 def backend_filter() -> str:
