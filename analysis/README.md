@@ -48,10 +48,38 @@ silently-misaligned frame.
 - `bench_analysis/charts.py` — Altair builders sharing one visual language
   (green = measured winner/ok, fixed hues per status and backend). Imported
   only by the notebook, so the package's core import stays pandas-only.
+- `bench_analysis/switcher.py` — the report's task and backend switches, as
+  plain radios over pre-rendered panels. Takes rendered HTML rather than
+  importing marimo, so the core import stays pandas-only.
 - `report.py` — the marimo notebook: arranges prep's frames and charts'
   builders, writes the prose. Every number in the text is computed from the
   loaded frame, so it updates as submissions land. It presents measurements
   and highlights measured winners — conclusions are the reader's.
+- `report.css` — the switcher styling the notebook injects into its export
+  (`App(css_file=…)`).
 
-`load.py` and `prep.py` are the tested assets (`uv run pytest`); the notebook
-is disposable. Lint with `uv run ruff check`.
+`load.py`, `prep.py`, and `switcher.py` are the tested assets
+(`uv run pytest`); the notebook is disposable. Lint with `uv run ruff check`.
+
+## Switching in a static export
+
+The HTML export has no kernel, so a `mo.ui` element cannot switch anything in
+it — clicking one raises *"Static notebook: this notebook is not connected to a
+kernel"*. Everything switchable is therefore pre-rendered and revealed by CSS:
+
+- **context size** — one panel per task, per chart.
+- **backend** — a page-level *both backends / ggml only* switch. tjs sets the
+  scale in §1 and §2, compressing the ggml configs against the axis; dropping it
+  makes the remaining spread readable. Both states are rendered in Python
+  because row order, axis scale, and the per-model winner are computed over the
+  rows a chart shows. §4 and §5 ignore the switch — they exist to compare the
+  two backends.
+
+The export also follows the reader's OS light/dark preference, from
+`[tool.marimo.display] theme = "system"` in `pyproject.toml`. That setting is
+what the export bakes in, and it has to be marimo's own: marimo picks the Vega
+theme from it, so charts only get light-on-dark axes if marimo itself knows it
+is dark. Page CSS cannot substitute — outputs render into a shadow root it
+cannot reach. Charts are built on a transparent background so the page shows
+through either way; mark and label colours are left exactly as computed, since
+they carry meaning.

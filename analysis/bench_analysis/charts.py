@@ -43,6 +43,13 @@ CPU_GPU_COLORS = {"gpu": "#2a9d8f", "cpu": "#64748b"}
 _DNF_COLORS = {v: STATUS_COLORS[k] for k, v in prep.FAIL_LABELS.items()}
 
 
+def _themed(chart: alt.Chart) -> alt.Chart:
+    """Let the page's background show through, so one rendering reads on both a
+    light and a dark page. Vega's default opaque white would otherwise punch a
+    panel out of a dark report; the text colours are retargeted in report.css."""
+    return chart.configure(background="transparent")
+
+
 def _captioned(chart: alt.Chart, text: str) -> alt.Chart:
     """One caption along the bottom of the whole chart — a per-facet axis title
     would repeat (and collide) under every facet column."""
@@ -140,13 +147,13 @@ def stacked(g: pd.DataFrame, colors: dict[str, str], caption: str, *,
 
     # Step-sized rows: each facet is exactly as tall as the configs it holds.
     # Model names ride above each panel rather than in a rotated left gutter.
-    return _captioned(
+    return _themed(_captioned(
         alt.layer(*layers).properties(width=width, height=alt.Step(20)).facet(
             row=alt.Row("model:N", title=None,
                         header=alt.Header(labelOrient="top", labelAnchor="start",
                                           labelAngle=0, labelFontWeight="bold",
                                           labelFontSize=13))),
-        caption)
+        caption))
 
 
 def status_bars(cells: pd.DataFrame) -> alt.Chart:
@@ -173,7 +180,7 @@ def status_bars(cells: pd.DataFrame) -> alt.Chart:
         y=alt.Y("who:N", sort=who_order), x="total:Q", text="lbl:N",
         color=alt.condition("datum.clean", alt.value(ACCENT), alt.value(STATUS_COLORS["too_slow"])),
     )
-    return (bars + labels).properties(width=420, height=24 * len(who_order))
+    return _themed((bars + labels).properties(width=420, height=24 * len(who_order)))
 
 
 def dumbbell(best: pd.DataFrame, task_order: list[str], caption: str, *,
@@ -218,12 +225,12 @@ def dumbbell(best: pd.DataFrame, task_order: list[str], caption: str, *,
     # Row facet labels are rotated 90° by default — silicon names overlap.
     # Lay them flat; the wider left gutter is worth it. The right padding is
     # headroom for the last column's gap labels, which hang past the hi dot.
-    return _captioned(
+    return _themed(_captioned(
         alt.layer(*layers).properties(width=width, height=alt.Step(26)).facet(
             row=alt.Row(f"{row}:N", title=None,
                         header=alt.Header(labelAngle=0, labelAlign="left", labelLimit=230)),
             column=alt.Column("task:N", title=None, sort=task_order)),
-        caption).properties(padding={"left": 5, "top": 5, "bottom": 5, "right": 42})
+        caption).properties(padding={"left": 5, "top": 5, "bottom": 5, "right": 42}))
 
 
 def coverage(df: pd.DataFrame):

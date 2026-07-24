@@ -28,6 +28,13 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["bench_analysis"]
 
+# Follow the reader's OS preference in the exported report. This is the setting
+# the export bakes in, and marimo drives both its own styling and the Vega theme
+# from it — a chart only gets light-on-dark axes if marimo itself knows it is
+# dark, which no amount of page CSS can tell it.
+[tool.marimo.display]
+theme = "system"
+
 [tool.ruff]
 line-length = 100
 

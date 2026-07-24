@@ -9,11 +9,13 @@ disposable part.
     uv run --project analysis marimo edit analysis/report.py            # interactive
     uv run --project analysis marimo export html analysis/report.py -o report.html
 
-Export to HTML to hand the team a self-contained snapshot; add
-`--no-include-code` so it reads as a report rather than a notebook. The export
-has no kernel, so nothing here depends on reactive widgets: task-dependent
-charts are pre-rendered for every context size and switched with tabs
-(client-side, export-safe).
+Export to HTML to hand the team a static snapshot; add `--no-include-code` so it
+reads as a report rather than a notebook. The export has no kernel, so nothing
+here may depend on a reactive widget — a `mo.ui` element cannot switch anything
+in it, and clicking one raises "Static notebook: this notebook is not connected
+to a kernel". Every switch in the report is therefore a `bench_analysis.switcher`
+group: panels pre-rendered for each context size and each backend filter, with
+plain radios and CSS doing the switching.
 
 Five sections, each a short claim backed by a chart, every number computed live
 from the published submissions:
@@ -28,7 +30,11 @@ from the published submissions:
 import marimo
 
 __generated_with = "0.23.9"
-app = marimo.App(width="medium")
+app = marimo.App(
+    width="medium",
+    app_title="On-device LLM inference benchmark",
+    css_file="report.css",
+)
 
 
 @app.cell
@@ -38,9 +44,9 @@ def _():
     import marimo as mo
     import pandas as pd
 
-    from bench_analysis import charts, load_results, prep
+    from bench_analysis import charts, load_results, prep, switcher
 
-    return Path, charts, load_results, mo, pd, prep
+    return Path, charts, load_results, mo, pd, prep, switcher
 
 
 @app.cell
@@ -103,6 +109,16 @@ def _(Path, load_results, mo, pd, prep):
 
 
 @app.cell
+def _(mo, switcher):
+    # tjs is slow and heavy enough to set the scale in §1 and §2, compressing the
+    # ggml configs against the axis. This drops it from those charts so the
+    # remaining spread is readable. §4 and §5 are unaffected — they exist to
+    # compare the two backends, so there is nothing there to filter.
+    mo.Html(switcher.backend_filter())
+    return
+
+
+@app.cell
 def _(mo):
     mo.md("""
     ## 1 · Time to an answer
@@ -136,20 +152,28 @@ def _(mo):
 
 
 @app.cell
-def _(charts, df, mo, ok, prep, task_order):
-    # One row order pinned across the tabs, so a config never jumps rows when
-    # the context size changes.
-    _phases = {_t: prep.time_phases(ok[ok.task == _t]) for _t in task_order}
-    _order = prep.shared_config_order(list(_phases.values()))
-    time_tabs = mo.ui.tabs({
-        _t: charts.stacked(
-            _phases[_t], charts.TIME_COLORS,
-            f"{_t}: time to a finished answer (ms) — "
-            "load + prefill + decode, lower is better",
-            dnf=prep.failures(df[df.task == _t]), config_order=_order)
-        for _t in task_order
-    }, value=task_order[len(task_order) // 2])
-    time_tabs
+def _(charts, df, mo, ok, prep, switcher, task_order):
+    def _time_tabs(_ok, _df, group):
+        # One row order pinned across the tabs, so a config never jumps rows when
+        # the context size changes.
+        _phases = {_t: prep.time_phases(_ok[_ok.task == _t]) for _t in task_order}
+        _order = prep.shared_config_order(list(_phases.values()))
+        return switcher.tabs({
+            _t: mo.as_html(charts.stacked(
+                _phases[_t], charts.TIME_COLORS,
+                f"{_t}: time to a finished answer (ms) — "
+                "load + prefill + decode, lower is better",
+                dnf=prep.failures(_df[_df.task == _t]), config_order=_order)).text
+            for _t in task_order
+        }, group=group, active=task_order[len(task_order) // 2])
+
+    # Both filter states are rendered here, not in the browser: the row order,
+    # the axis scale, and the per-model winner are all computed over the rows a
+    # chart shows, so dropping tjs client-side would leave all three stale.
+    mo.Html(switcher.variants(
+        _time_tabs(ok, df, "time-all"),
+        _time_tabs(ok[ok.backend == "ggml"], df[df.backend == "ggml"], "time-ggml"),
+    ))
     return
 
 
@@ -176,18 +200,23 @@ def _(mo):
 
 
 @app.cell
-def _(charts, mo, ok, prep, task_order):
-    _phases = {_t: prep.memory_phases(ok[ok.task == _t]) for _t in task_order}
-    _order = prep.shared_config_order(list(_phases.values()))
-    memory_tabs = mo.ui.tabs({
-        _t: charts.stacked(
-            _phases[_t], charts.MEMORY_COLORS,
-            f"{_t}: decode footprint (MB): solid = sustained RAM+VRAM, "
-            "pale = transient peak — lower is better",
-            config_order=_order)
-        for _t in task_order
-    }, value=task_order[len(task_order) // 2])
-    memory_tabs
+def _(charts, mo, ok, prep, switcher, task_order):
+    def _memory_tabs(_ok, group):
+        _phases = {_t: prep.memory_phases(_ok[_ok.task == _t]) for _t in task_order}
+        _order = prep.shared_config_order(list(_phases.values()))
+        return switcher.tabs({
+            _t: mo.as_html(charts.stacked(
+                _phases[_t], charts.MEMORY_COLORS,
+                f"{_t}: decode footprint (MB): solid = sustained RAM+VRAM, "
+                "pale = transient peak — lower is better",
+                config_order=_order)).text
+            for _t in task_order
+        }, group=group, active=task_order[len(task_order) // 2])
+
+    mo.Html(switcher.variants(
+        _memory_tabs(ok, "memory-all"),
+        _memory_tabs(ok[ok.backend == "ggml"], "memory-ggml"),
+    ))
     return
 
 
@@ -234,8 +263,11 @@ def _(mo, n_machines, reliability):
 
 
 @app.cell
-def _(charts, counts):
-    charts.status_bars(counts)
+def _(charts, counts, mo, switcher):
+    mo.Html(switcher.variants(
+        mo.as_html(charts.status_bars(counts)).text,
+        mo.as_html(charts.status_bars(counts[counts.backend == "ggml"])).text,
+    ))
     return
 
 
