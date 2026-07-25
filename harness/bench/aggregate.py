@@ -62,36 +62,48 @@ def _raw_samples(raw: dict):
 
 
 def sampling_sources(raw: dict) -> dict:
-    """The *run* box's sampling capabilities — {os, nvml}.
+    """The *run* box's sampling capabilities — {os, nvml, drm}.
 
     These must come off the raw artifact, never the current host: aggregation is a
     pure function of the raw, and reading the aggregating box instead would
     silently rewrite vram_method whenever a raw is re-aggregated elsewhere (a Mac
     raw re-aggregated on a Linux box would read "n/a").
 
-    `bench run` records them (raw["sampling"]); a raw without the block is still
-    aggregatable by inferring from the data: any VRAM sample > 0 means NVML
-    produced it (the only vram source — GTT folds into rss). The inference only
-    misreads a box whose capability went unused — exactly the case where
-    vram_method collapses to n/a anyway."""
+    `bench run` records them (raw["sampling"]). A raw predating a capability is
+    still aggregatable: NVML is inferred from the data (any VRAM sample > 0 meant
+    NVML produced it, back when it was the only VRAM source), and `drm` defaults
+    off, which is exactly what those runs sampled — their device-local pool went
+    unread, so their VRAM is null rather than wrong."""
     os = raw["machine"]["os"]
     if recorded := raw.get("sampling"):
-        return {"os": os, "nvml": recorded["nvml"]}
-    return {"os": os, "nvml": any(s["vram"] > 0 for s in _raw_samples(raw))}
+        return {"os": os, "nvml": recorded["nvml"], "drm": recorded.get("drm", False)}
+    return {"os": os, "nvml": any(s["vram"] > 0 for s in _raw_samples(raw)), "drm": False}
 
 
 def _saw_vram(traces: list[Trace]) -> bool:
     return any(s["vram"] > 0 for sp in traces for s in sp["samples"])
 
 
-def vram_method(traces: list[Trace], sources: dict) -> str:
-    """nvml / unified / n/a for a run, from the run box's sources + whether this
-    run actually put anything on the GPU."""
+def vram_method(traces: list[Trace], sources: dict, provider: str) -> str:
+    """nvml / drm / unified / n/a for a run, from the run box's sources, the
+    provider, and whether this run actually put anything on the GPU.
+
+    `drm` is DRM fdinfo's device-local pool — a discrete card's VRAM, or an APU's
+    BIOS carve-out, which is reserved before boot and so is not the host RAM that
+    lands in RSS.
+
+    A CPU EP has no device pool *by definition*, and saying so takes an explicit
+    check rather than trusting the samples: loading a model on `cpu` still brings
+    the GPU backend up, and its idle bookkeeping (12 KB on the Ryzen APU) is enough
+    to read as "device memory seen" and report a measured 0.0 where the honest
+    answer is "not applicable"."""
     if sources["os"] == "macos":
         return "unified"
-    if sources["nvml"] and _saw_vram(traces):
+    if provider == "cpu" or not _saw_vram(traces):
+        return "n/a"
+    if sources["nvml"]:
         return "nvml"
-    return "n/a"
+    return "drm" if sources.get("drm") else "n/a"
 
 
 def _completions(traces: list[Trace]) -> list[str]:
@@ -129,7 +141,7 @@ def task_result(
         return [x[key] for x in loads]
 
     def vram(vals: list) -> list | None:
-        return stat(vals) if method == "nvml" else None
+        return stat(vals) if method in ("nvml", "drm") else None
 
     return {
         "task": name,
@@ -171,7 +183,7 @@ def run_result(
     """Assemble one results `run` (one model/variant/provider). `sources` is the
     run box's sampling_sources(raw) — methods derive from it, never from the
     aggregating host."""
-    method = vram_method(all_traces, sources)
+    method = vram_method(all_traces, sources, provider)
     device = next((s["events"]["device"] for s in all_traces if s["events"]), "unknown")
     run = {
         "provider": provider,
@@ -202,7 +214,7 @@ def _run_from_cell(cell: dict, sources: dict) -> dict:
     unusable = too_slow | errored
     all_traces = gate + [s for g in task_groups for s in g["spawns"]]
 
-    method = vram_method(all_traces, sources)
+    method = vram_method(all_traces, sources, cell["provider"])
 
     # The cold first-touch load is attributed once, to the first *scored* task — the
     # producer stamped `cold_ms` on the owning cell (null elsewhere).

@@ -12,15 +12,25 @@ numbers even though Vulkan counts as `n/a` for non-NVIDIA hardware. The run's
 `vram_method` (nvml / unified / n/a) is decided in aggregate.py from platform +
 whether any VRAM was actually seen.
 
-GTT (the RSS blind spot): on a GPU backend the weights and KV cache are uploaded
-into driver-allocated buffer objects that never enter the process address space,
-so psutil RSS misses them entirely. On a unified-memory APU — the only place a
-non-NVIDIA GPU backend runs here — those live in GTT, which is *system RAM*
-apertured for the GPU (a 4 GB model showed 670 MB RSS but 4.1 GB resident GTT).
-Linux exposes per-PID GTT via DRM fdinfo, so we read it and fold it into `rss`:
-the reported RAM then reflects the true footprint, not the CPU-side scaffolding.
-(NVIDIA goes through NVML instead — CUDA device memory is *not* system RAM, so it
-belongs in VRAM, not RSS.)
+The RSS blind spot: on a GPU backend the weights and KV cache are uploaded into
+driver-allocated buffer objects that never enter the process address space, so
+psutil RSS misses them entirely (a 4 GB model showed 670 MB RSS). Linux exposes
+those buffers per-PID via DRM fdinfo, and they land in one of two pools — which
+one decides whether they are the process's RAM or the device's:
+
+  • **system RAM the GPU pinned** — amdgpu's `gtt`, i915/xe's `system0`. This is
+    the OS's own memory, so it folds into `rss` and the reported RAM reflects the
+    true footprint rather than the CPU-side scaffolding.
+  • **device-local** — a discrete card's `vram`, and an APU's `vram`, which is
+    the BIOS carve-out: reserved before boot and missing from MemTotal, so it is
+    not the host's to charge a process for. It goes to `vram`, the same pool NVML
+    fills on NVIDIA.
+
+Drivers name regions themselves, so the split matches the region, not one
+vendor's word for it. Which pool a run's bytes land in is the driver's choice and
+varies by machine: on an Intel iGPU everything came back in `system0`, while an
+AMD APU put 1.9 GB in the carve-out and 246 MB in `gtt`. (NVIDIA goes through
+NVML instead — CUDA device memory is not system RAM either.)
 """
 
 from __future__ import annotations
@@ -45,12 +55,13 @@ except Exception:  # noqa: BLE001 — NVML is best-effort; absent on non-NVIDIA 
 NVML_AVAILABLE = bool(_NVML_HANDLES)
 
 
-# Read per-PID GTT off DRM fdinfo only on a non-NVIDIA Linux box with a render node
-# (NVIDIA's GPU memory comes from NVML and isn't system RAM, so it must not land in
-# RSS). Cheap /proc reads — no driver calls — so it can't perturb GPU decode.
+# Read per-PID GPU memory off DRM fdinfo only on a non-NVIDIA Linux box with a
+# render node (on NVIDIA the numbers come from NVML instead). Cheap /proc reads —
+# no driver calls — so it can't perturb GPU decode.
 _HAS_DRM = (
     platform.system() == "Linux" and not _NVML_HANDLES and any(Path("/dev/dri").glob("renderD*"))
 )
+DRM_AVAILABLE = _HAS_DRM
 
 
 def gpu_names() -> list[str]:
@@ -132,7 +143,10 @@ def _vram_bytes(pids: set[int]) -> int:
     return total
 
 
-_GTT_UNITS = {"B": 1 / 1024, "KiB": 1, "MiB": 1024, "GiB": 1024 * 1024}
+_FDINFO_UNITS = {"B": 1 / 1024, "KiB": 1, "MiB": 1024, "GiB": 1024 * 1024}
+# Counters in preference order: `resident` is what's backed right now; the older
+# `memory`/`total` keys stand in on kernels that don't emit it.
+_FDINFO_KINDS = ("resident", "memory", "total")
 
 
 def _fdinfo_kib(line: str) -> int:
@@ -141,20 +155,47 @@ def _fdinfo_kib(line: str) -> int:
     if not parts:
         return 0
     unit = parts[1] if len(parts) > 1 else "B"
-    return int(float(parts[0]) * _GTT_UNITS.get(unit, 1))
+    return int(float(parts[0]) * _FDINFO_UNITS.get(unit, 1))
 
 
-def _drm_gtt_bytes(pids: set[int]) -> int:
-    """Summed resident GTT (GPU-pinned system RAM) across the pids' DRM fds.
+def _region_pool(region: str) -> str | None:
+    """Which pool a DRM memory region belongs to: "system", "device", or neither.
+
+    Region names are the driver's to choose (drm-usage-stats.rst fixes the key
+    shape, not the vocabulary), and the split matters because the two pools are
+    different resources:
+
+    - **system** — RAM the GPU pinned out of the OS's own memory, invisible to
+      RSS: amdgpu's `gtt`, i915/xe's `system0` and `stolen-system0`.
+    - **device** — memory that is not the OS's to allocate: a discrete card's
+      `vram`/`local0`, and an APU's `vram`, which is the BIOS carve-out. The
+      carve-out is *reserved before boot* and absent from MemTotal (a 16 GB
+      Ryzen 7 255 laptop with a 2 GB carve-out reports 13.7 GB), so folding it
+      into RSS would charge a process for memory the OS never had.
+
+    amdgpu's `cpu` region and its byte-scale hardware regions (`gds`, `gws`,
+    `oa`, `doorbell`, `mmioremap`) are neither — they aren't RAM footprints."""
+    if region == "gtt" or region.startswith(("system", "stolen-system")):
+        return "system"
+    if region.startswith(("vram", "local", "stolen-local")):
+        return "device"
+    return None
+
+
+def _drm_bytes(pids: set[int]) -> tuple[int, int]:
+    """(GPU-pinned system RAM, device-local memory) across the pids' DRM fds.
 
     Per DRM fdinfo (Documentation/gpu/drm-usage-stats.rst). A process can hold
     several fds to the same GPU client and the counters repeat across them, so
-    dedupe per (pid, drm-client-id) with max, then sum distinct clients. Prefer
-    `resident` (backed right now); fall back to the older `memory`/`total` keys on
-    kernels that don't emit it. fds open and close mid-run, so tolerate races."""
-    total = 0
+    dedupe per (pid, drm-client-id) with max, then sum distinct clients. A driver
+    may split a pool over several regions, so sum within a counter before falling
+    back to the next — and pick that counter per pool, since a kernel emitting
+    `resident` for one may only emit `memory` for the other. Both pools come off
+    one pass: this runs on the sample tick, so the fds are read once, not twice.
+    fds open and close mid-run, so tolerate races."""
+    totals = {"system": 0, "device": 0}
     for pid in pids:
-        per_client: dict[str, int] = {}
+        per_client: dict[str, dict[str, int]] = {}
         try:
             fds = list(Path(f"/proc/{pid}/fdinfo").iterdir())
         except OSError:
@@ -167,20 +208,27 @@ def _drm_gtt_bytes(pids: set[int]) -> int:
             if "drm-driver:" not in text:
                 continue
             client = ""
-            resident = memory = grand = 0
+            by_pool = {p: dict.fromkeys(_FDINFO_KINDS, 0) for p in totals}
             for line in text.splitlines():
-                if line.startswith("drm-client-id:"):
+                key = line.split(":", 1)[0]
+                if key == "drm-client-id":
                     client = line.split(":", 1)[1].strip()
-                elif line.startswith("drm-resident-gtt:"):
-                    resident = _fdinfo_kib(line)
-                elif line.startswith("drm-memory-gtt:"):
-                    memory = _fdinfo_kib(line)
-                elif line.startswith("drm-total-gtt:"):
-                    grand = _fdinfo_kib(line)
-            gtt = resident or memory or grand
-            per_client[client] = max(per_client.get(client, 0), gtt)
-        total += sum(per_client.values())
-    return total * 1024  # KiB → bytes
+                    continue
+                for kind in _FDINFO_KINDS:
+                    prefix = f"drm-{kind}-"
+                    if not key.startswith(prefix):
+                        continue
+                    if pool := _region_pool(key[len(prefix) :]):
+                        by_pool[pool][kind] += _fdinfo_kib(line)
+                    break
+            seen = per_client.setdefault(client, dict.fromkeys(totals, 0))
+            for pool, by_kind in by_pool.items():
+                best = next((by_kind[k] for k in _FDINFO_KINDS if by_kind[k]), 0)
+                seen[pool] = max(seen[pool], best)
+        for seen in per_client.values():
+            for pool, value in seen.items():
+                totals[pool] += value
+    return totals["system"] * 1024, totals["device"] * 1024  # KiB → bytes
 
 
 class Sampler:
@@ -200,8 +248,9 @@ class Sampler:
         We deliberately don't track USS: it *excludes* those mmap'd weights, so it
         undercounts the very footprint we care about on the mmap backend, while on
         tjs (private weights) it just equals RSS. memory_info is also cheaper than
-        memory_full_info — no /proc/smaps walk. (On an APU the weights live in GTT,
-        outside RSS; `_run` adds that back — see `_drm_gtt_bytes`.)"""
+        memory_full_info — no /proc/smaps walk. (On an APU the weights live in the
+        GPU aperture, outside RSS; `_run` adds that back — see
+        `_drm_system_bytes`.)"""
         try:
             tree = [self._root, *self._root.children(recursive=True)]
         except (psutil.NoSuchProcess, ProcessLookupError):
@@ -219,22 +268,23 @@ class Sampler:
     def _run(self) -> None:
         tick = 0
         vram = 0
-        gtt = 0
+        pinned = 0
         while not self._stop.is_set():
             try:
                 rss, pids = self._tree_stats()
             except (psutil.NoSuchProcess, ProcessLookupError):
                 break
-            # VRAM and GTT share the slow tick: per-PID NVML enumeration at
-            # 100 Hz perturbs decode, and both move slowly anyway. Carry forward.
+            # VRAM and the GPU aperture share the slow tick: per-PID NVML
+            # enumeration at 100 Hz perturbs decode, and both move slowly
+            # anyway. Carry forward.
             if pids and tick % VRAM_POLL_EVERY == 0:
                 if _NVML_HANDLES:
                     vram = _vram_bytes(pids)
                 elif _HAS_DRM:
-                    gtt = _drm_gtt_bytes(pids)
-            # GTT is the GPU-pinned system RAM psutil RSS can't see (0 off the APU
-            # path) — fold it in so `rss` is the true RAM footprint.
-            self.samples.append({"t": time.time_ns(), "rss": rss + gtt, "vram": vram})
+                    pinned, vram = _drm_bytes(pids)
+            # `pinned` is the GPU-pinned system RAM psutil RSS can't see (0 off the
+            # APU path) — fold it in so `rss` is the true RAM footprint.
+            self.samples.append({"t": time.time_ns(), "rss": rss + pinned, "vram": vram})
             tick += 1
             time.sleep(SAMPLE_INTERVAL_S)
 

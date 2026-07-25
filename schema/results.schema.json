@@ -60,7 +60,7 @@
           "items": { "type": "string" },
           "description": "Timed tasks that were attempted but produced no sample for a reason other than slowness — a spawn that died emitting nothing (crash, OOM, device-lost). Distinct from `timed_out_tasks`: a failure, not slowness. Absent from `tasks`; the report shows them as 'errored'."
         },
-        "vram_method": { "enum": ["nvml", "unified", "n/a"], "description": "How per-PID VRAM was obtained." },
+        "vram_method": { "enum": ["nvml", "drm", "unified", "n/a"], "description": "How per-PID VRAM was obtained: NVML, DRM fdinfo's device-local pool (a discrete card's VRAM, or an APU's BIOS carve-out — reserved before boot, so not host RAM), unified memory, or unavailable." },
         "tasks": { "type": "array", "items": { "$ref": "#/$defs/taskResult" } }
       }
     },

@@ -236,7 +236,7 @@ def cmd_run(args: argparse.Namespace) -> None:
         "machine": machine.info(args.machine),
         # The run box's sampling sources, recorded so re-aggregating this raw on a
         # different box reproduces the same vram_method (aggregate.sampling_sources).
-        "sampling": {"nvml": sampling.NVML_AVAILABLE},
+        "sampling": {"nvml": sampling.NVML_AVAILABLE, "drm": sampling.DRM_AVAILABLE},
         "iters": args.iters,
         "spawns": args.spawns,
         "cells": raw_cells,
