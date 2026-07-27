@@ -65,6 +65,9 @@ _RUN_KEYS = ("provider", "device", "model", "quant", "healthy", "vram_method")
 # Geometry scalars worth having as columns (the full block incl. per-layer
 # typing stays in the JSON for consumers that need it).
 _GEO_KEYS = ("n_layer", "n_params", "file_bytes", "n_ctx_train")
+# The tensor-role split: `body` is what decode streams per token (embeddings are
+# row lookups, the head is tiny/tied) — the estimator's bytes/flops anchor.
+_GEO_TENSOR_KEYS = ("body", "embedding")
 
 
 def _slug(machine: dict) -> str:
@@ -129,6 +132,10 @@ def load_results(root: str | Path = "results") -> pd.DataFrame:
             row["unhealthy_reason"] = run.get("unhealthy_reason")
             for key in _GEO_KEYS:
                 row[f"geo_{key}"] = (run.get("geometry") or {}).get(key)
+            for key in _GEO_TENSOR_KEYS:
+                role = ((run.get("geometry") or {}).get("tensors") or {}).get(key) or {}
+                row[f"geo_{key}_bytes"] = role.get("bytes")
+                row[f"geo_{key}_params"] = role.get("params")
             job = run["job"]
             row["task"] = job["task"] if run["healthy"] else None
             row["status"] = job["status"] if run["healthy"] else "unhealthy"
