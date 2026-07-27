@@ -65,9 +65,12 @@ def _dimms_linux() -> list[dict] | None:
         return None
     if out.returncode != 0 or "Memory Device" not in out.stdout:
         return None
+    return _parse_dimms(out.stdout)
 
+
+def _parse_dimms(text: str) -> list[dict] | None:
     dimms = []
-    for block in out.stdout.split("Memory Device")[1:]:
+    for block in text.split("Memory Device")[1:]:
         fields = {}
         for line in block.splitlines():
             if ":" in line:
@@ -81,13 +84,17 @@ def _dimms_linux() -> list[dict] | None:
         configured = _MTS.search(fields.get("Configured Memory Speed", ""))
         rank = fields.get("Rank", "")
         locator = fields.get("Locator", "") + "/" + fields.get("Bank Locator", "")
-        channel = re.search(r"(?i)ch(?:annel)?[ _-]?([a-z0-9])", locator)
+        # A channel is per memory controller: "Controller0-ChannelA" and
+        # "Controller1-ChannelA" are two channels, not one.
+        channel = re.search(r"(?i)(?:controller[ _-]?(\d+).*)?ch(?:annel)?[ _-]?([a-z0-9])",
+                            locator)
         dimms.append({
             "size_gb": size_gb,
             "rated_mts": int(rated.group(1)) if rated else None,
             "configured_mts": int(configured.group(1)) if configured else None,
             "rank": int(rank) if rank.isdigit() else None,
-            "_channel": channel.group(1).upper() if channel else locator,
+            "_channel": (f"{channel.group(1) or ''}/{channel.group(2).upper()}"
+                         if channel else locator),
         })
     return dimms or None
 
