@@ -91,7 +91,7 @@ def _(Path, load_memory, load_probes, load_results, load_sweeps, mo, prep):
 
 
 @app.cell
-def _(df, estimate, memory, mo, ok, switcher):
+def _(df, estimate, memory, mo, sweeps, switcher):
     # ── Models tab ──────────────────────────────────────────────────────────
     # The comparison table: machine-independent costs per model (what the model
     # *is*), then measured anchors per lane (what it *does* on known silicon).
@@ -126,25 +126,55 @@ def _(df, estimate, memory, mo, ok, switcher):
     |---|---|---|---|---|
     {chr(10).join(_rows)}
 
-    The cards below add what each model measured on the machines we have —
-    real rates on real silicon, the job's end-to-end numbers, and any
-    caveats the runs surfaced.
+    The cards below add measured rates on the machines we have, read off the
+    sweep curves at standard reference points, and any caveats the runs
+    surfaced.
     """).text
 
-    # Per-model cards.
+    # Per-model cards. Anchors come from the sweep — the fine measurement —
+    # read at standard reference points, never from the single validation job
+    # (that one exists to check the sweep, and lives in Explore).
+    import math as _math
+
+    def _interp_log(pts, at):
+        pts = sorted(pts)
+        if not pts or not (pts[0][0] <= at <= pts[-1][0]):
+            return None
+        for (x0, y0), (x1, y1) in zip(pts, pts[1:], strict=False):
+            if x0 <= at <= x1:
+                f = (_math.log(at / x0)) / (_math.log(x1 / x0))
+                return y0 * (y1 / y0) ** f
+        return None
+
+    def _anchor_rows(model):
+        rows = []
+        for (m, p), g in sweeps[sweeps.model == model].groupby(["machine", "provider"]):
+            dec = g[(g.kind == "decode") & g.tps_p50.gt(0)]
+            pre = g[(g.kind == "prefill") & g.ttft_ms.notna()]
+            if not len(dec) and not len(pre):
+                continue
+            fresh = dec.loc[dec.kv_fill.idxmin()].tps_p50 if len(dec) else None
+            deep = dec.loc[dec.kv_fill.idxmax()] if len(dec) else None
+            t2k = _interp_log(list(zip(pre.tokens, pre.ttft_ms, strict=True)), 2048) \
+                if len(pre) else None
+            t8k = _interp_log(list(zip(pre.tokens, pre.ttft_ms, strict=True)), 8192) \
+                if len(pre) else None
+            rows.append(
+                f"| {m} · {p} "
+                f"| {f'{t2k / 1e3:.1f} s' if t2k else '—'} "
+                f"| {f'{t8k / 1e3:.1f} s' if t8k else '—'} "
+                f"| {f'{fresh:.0f}' if fresh else '—'} "
+                f"| {f'{deep.tps_p50:.0f} @ {deep.kv_fill / 1024:.0f}k' if deep is not None else '—'}"
+                " |")
+        return rows
+
     def _card(model):
         rows = _costs[_costs.model == model]
-        sub = ok[ok.model == model]
-        anchor_rows = []
-        for _a in sub.itertuples():
-            anchor_rows.append(
-                f"| {_a.lane} | {_a.quant} "
-                f"| {_a.prefill_tps_p50:,.0f} | {_a.decode_tps_p50:.0f} "
-                f"| {_a.ttft_ms_p50 / 1000:.1f} s |")
+        anchors = _anchor_rows(model)
         bad = df[(df.model == model) & (df.status != "ok")]
         caveat = ""
         if len(bad):
-            caveat = "\n**Did not score:** " + "; ".join(
+            caveat = "\n**Did not score the job:** " + "; ".join(
                 f"{b.lane} — {b.status.replace('_', ' ')}" for b in bad.itertuples()) + "\n"
         c = rows.iloc[0]
         return mo.md(f"""
@@ -153,15 +183,16 @@ def _(df, estimate, memory, mo, ok, switcher):
         KV {c.kv_slope_mb * 1024:.0f} MB per 1k tokens of context{
         f" plus a {c.kv_state_mb:.0f} MB recurrent state" if c.kv_state_mb >= 1 else ""}.
 
-        **Measured on our machines** — the validation job (a ≈1.7k-token
-        prompt, 256 decoded tokens), per lane:
+        **Measured rates**, read off the sweep at reference points — how long
+        to read a 2k / 8k prompt, and generation speed on an empty vs full
+        context (generation slows as the context fills; both ends shown):
 
-        | lane | quant | prefill tok/s | decode tok/s | time to first token |
+        | lane | prompt 2k | prompt 8k | tok/s fresh | tok/s deep |
         |---|---|---|---|---|
-        {chr(10).join(anchor_rows) if anchor_rows else "| *(no scored runs)* | | | | |"}
+        {chr(10).join(anchors) if anchors else "| *(no sweep data)* | | | | |"}
         {caveat}
-        Full curves — how these rates move with context length — are in
-        **Explore**.
+        The full curves these points are read from are in **Explore**; a "—"
+        means the sweep's budget ended before that depth on that lane.
         """).text
 
     _models = sorted(_costs.model.unique())
@@ -178,23 +209,20 @@ def _(df, estimate, memory, mo, probes, sweeps):
     # factor → predicted rates for machines nobody measured. The tab reports
     # its own calibration honestly; the interactive fleet calculator lands
     # once the leave-one-out error earns it.
-    _pts = estimate.lane_points(df, sweeps, memory, probes)
-    _eff = estimate.efficiency(_pts)
+    _pts = estimate.points(df, sweeps, memory, probes)
+    _fits = estimate.lane_fits(_pts)
     _loo = estimate.loo(_pts)
 
-    _eff_rows = [
-        f"| {r.machine} | {r.provider} | {r.kind} | {r.eta:.2f} |"
-        for r in _eff.itertuples()]
+    _fit_rows = [
+        f"| {r.machine} | {r.provider} | {r.kind} | {r.t0_ms:.1f} ms "
+        f"| {'—' if not (r.rate < float('inf')) else f'{r.rate:.0f}'} "
+        f"| {'—' if not (r.eta < float('inf')) else f'{r.eta:.2f}'} "
+        f"| {r.r2:.2f} |"
+        for r in _fits.itertuples()]
     _loo_rows = [
-        f"| {r.machine} | {r.provider} | {r.kind} "
-        f"| ×{1 + r.median_err:.2f} | ×{1 + r.worst_err:.2f} |"
+        f"| {r.machine} | {r.provider} | {r.kind} | {r.n_lanes_pooled} "
+        f"| {r.median_err * 100:.0f}% | {r.worst_err * 100:.0f}% |"
         for r in _loo.itertuples()]
-
-    _spread = (_eff.groupby(["lane_class", "kind"])
-               .agg(lo=("eta", "min"), hi=("eta", "max")).reset_index())
-    _spread_rows = [
-        f"| {r.lane_class} | {r.kind} | {r.lo:.2f} – {r.hi:.2f} |"
-        for r in _spread.itertuples()]
 
     fleet_tab = mo.md(f"""
     The goal: describe a fleet (so many iGPU laptops, so many discrete-GPU
@@ -203,40 +231,40 @@ def _(df, estimate, memory, mo, probes, sweeps):
     tokens per second) — and read off, per model, **how much of the fleet
     clears the bar**.
 
-    The mechanism: every measurement factors into *model cost* × *machine
-    ceiling* × *stack efficiency η*. Costs are machine-independent (Models
-    tab). Ceilings are three describable numbers per machine — memory,
-    bandwidth, compute — which our probe measures bare. If η transfers
-    between machines of a class, fleets only need to be described by
-    ceilings, not measured.
+    The mechanism: on every measured lane, time per unit of work follows
+    `time = t₀ + work ÷ rate` — a per-token overhead plus a work term. The
+    work is the model's cost (Models tab: bytes streamed per token for
+    generation, FLOPs for prompt reading) — machine-independent. The lane
+    contributes two numbers: its overhead `t₀` and its achieved `rate`,
+    expressed as a fraction **η** of the machine's bare probed ceiling. If
+    `t₀` and η transfer between machines of a class, a fleet only needs
+    describable ceilings — memory, bandwidth, compute — not measurement.
 
-    **Calibration status: η does not transfer well enough yet.** Across the
-    measured lanes it spans:
+    That model fits each measured lane well (generation R² ≥ 0.90 wherever
+    the rate is identifiable):
 
-    | lane class | phase | η range |
-    |---|---|---|
-    {chr(10).join(_spread_rows)}
+    | machine | provider | phase | t₀ | rate GB/s or TFLOP/s | η | R² |
+    |---|---|---|---|---|---|---|
+    {chr(10).join(_fit_rows)}
 
-    Predicting each lane from the others' η (leave-one-out) is off by:
+    ("—" marks an overhead-dominated lane: its rate term is unidentifiable —
+    the whole cost is t₀.) **Whether the parameters transfer is the open
+    question.** Predicting each lane using only the *other* lanes of its
+    class (leave-one-out; lanes with poor fits or unidentifiable rates may
+    borrow but never lend):
 
-    | machine | provider | phase | median | worst |
-    |---|---|---|---|---|
+    | machine | provider | phase | lanes pooled | median error | worst |
+    |---|---|---|---|---|---|
     {chr(10).join(_loo_rows)}
 
-    Reading: ×1.15 means predictions land within 15%. Until the medians sit
-    near that, this page shows calibration, not a calculator. The per-lane
-    factors, for the curious:
-
-    | machine | provider | phase | η (fraction of bare ceiling) |
-    |---|---|---|---|
-    {chr(10).join(_eff_rows)}
-
-    What would tighten it: more submissions per class (three lanes per class
-    cannot separate silicon from stack), per-tensor-type kernel awareness
-    (the q2 pack's history shows a single missing kernel breaks the bandwidth
-    model), and an attention term in the prefill cost. The next submission —
-    an Apple-silicon Mac — is the held-out test: its numbers will be
-    predicted from ceilings before the run, then measured.
+    Where the probed ceiling is trustworthy the transfer is already usable
+    (the two iGPU/discrete generation lanes predict each other within
+    ~5–25%); the large errors trace to known probe gaps — the CPU bandwidth
+    probe under-measures (one lane's measured decode *exceeds* its "ceiling"),
+    and the compute probe measures f16 while inference runs quantized
+    kernels. Fixing the probes and re-probing is the next step; after that,
+    an Apple-silicon Mac is the held-out test — predicted from its ceilings
+    first, then measured.
     """).text
     return (fleet_tab,)
 

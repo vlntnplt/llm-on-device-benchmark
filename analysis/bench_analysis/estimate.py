@@ -28,6 +28,11 @@ import pandas as pd
 # still negligible), so it is the right place to read the compute efficiency.
 SHALLOW_TOKENS = 1024
 
+# A lane lends its parameters to leave-one-out pools only when the affine model
+# actually describes it — a poor fit is a lane the model doesn't capture, and
+# its parameters are noise to everyone else.
+LEND_R2 = 0.85
+
 
 def kv_fit(memory: pd.DataFrame) -> pd.DataFrame:
     """Per (model, quant): `kv_mb = state_mb + slope_mb·n_ctx` fit over the
@@ -79,12 +84,14 @@ def _ceilings(probes: pd.DataFrame) -> pd.DataFrame:
     return pd.concat([bw, gemm], axis=1).reset_index()
 
 
-def lane_points(
+def points(
     results: pd.DataFrame, sweeps: pd.DataFrame, memory: pd.DataFrame, probes: pd.DataFrame
 ) -> pd.DataFrame:
-    """One row per usable sweep point, with its implied efficiency: decode
-    points carry η_decode = implied bandwidth / probed bandwidth; shallow
-    prefill chunks carry η_prefill = implied FLOP rate / probed gemm."""
+    """One row per usable sweep point, in the affine model's coordinates:
+    `y = t0 + x / rate`, where a decode point is (x = GB streamed per token,
+    y = seconds per token, ceiling = probed bandwidth) and a shallow prefill
+    chunk is (x = TFLOPs in the chunk, y = seconds for the chunk, ceiling =
+    probed gemm TFLOP/s). One frame, two `kind`s, same geometry."""
     costs = model_costs(results, memory).set_index(["model", "quant"])
     ceil = _ceilings(probes).set_index(["machine", "provider"])
     rows = []
@@ -94,7 +101,6 @@ def lane_points(
             continue
         c, lane = costs.loc[key_mq], ceil.loc[key_lane]
         if r.kind == "decode" and r.tps_p50 and r.tps_p50 > 0:
-            implied_gbs = decode_read_mb(c, r.kv_fill) * r.tps_p50 / 1024
             rows.append(
                 {
                     "machine": r.machine,
@@ -102,15 +108,12 @@ def lane_points(
                     "model": r.model,
                     "quant": r.quant,
                     "kind": "decode",
-                    "x": r.kv_fill,
-                    "measured": r.tps_p50,
+                    "x": decode_read_mb(c, r.kv_fill) / 1024,
+                    "y": 1.0 / r.tps_p50,
                     "ceiling": lane.bw_gbs,
-                    "eta": implied_gbs / lane.bw_gbs,
                 }
             )
         elif r.kind == "prefill" and r.chunk_ms and r.chunk_ms > 0 and r.tokens <= SHALLOW_TOKENS:
-            tok_s = 512 / (r.chunk_ms / 1e3)
-            implied_tflops = 2 * c.body_params * tok_s / 1e12
             rows.append(
                 {
                     "machine": r.machine,
@@ -118,10 +121,9 @@ def lane_points(
                     "model": r.model,
                     "quant": r.quant,
                     "kind": "prefill",
-                    "x": r.tokens,
-                    "measured": tok_s,
+                    "x": 2 * c.body_params * 512 / 1e12,
+                    "y": r.chunk_ms / 1e3,
                     "ceiling": lane.gemm_tflops,
-                    "eta": implied_tflops / lane.gemm_tflops,
                 }
             )
     return pd.DataFrame(rows)
@@ -131,39 +133,85 @@ def _lane_class(provider: str) -> str:
     return "cpu" if provider == "cpu" else "gpu"
 
 
-def efficiency(points: pd.DataFrame) -> pd.DataFrame:
-    """Per (lane, kind): the median η over that lane's models and points."""
-    out = points.groupby(["machine", "provider", "kind"]).eta.median().rename("eta").reset_index()
-    out["lane_class"] = out.provider.map(_lane_class)
-    return out
+def _affine(xs: np.ndarray, ys: np.ndarray) -> tuple[float, float]:
+    """Least-squares `y = t0 + x·sec_per_unit`, both parameters clamped
+    non-negative: a lane whose points cannot identify the slope (an
+    overhead-dominated device) degrades to `t0 = mean(y)`, slope 0, rather
+    than a nonsense negative rate."""
+    if len(xs) < 2 or np.ptp(xs) == 0:
+        return float(np.mean(ys)), 0.0
+    sec_per_unit, t0 = np.polyfit(xs, ys, 1)
+    # Unidentifiable rate: negative, or contributing less than 0.1% of the
+    # observed time across the whole x range — overhead is the whole story.
+    if sec_per_unit < 0 or sec_per_unit * float(np.ptp(xs)) < 1e-3 * float(np.mean(ys)):
+        return float(np.mean(ys)), 0.0
+    if t0 < 0:
+        return 0.0, float((xs * ys).sum() / (xs * xs).sum())
+    return float(t0), float(sec_per_unit)
 
 
-def loo(points: pd.DataFrame) -> pd.DataFrame:
-    """Leave-one-lane-out: predict each lane's measured points from η pooled
-    over the *other* lanes of its class; per (lane, kind) the median and worst
-    absolute relative error. The whole estimator stands or falls here."""
-    eff = efficiency(points)
+def lane_fits(pts: pd.DataFrame) -> pd.DataFrame:
+    """Per (lane, kind): the affine fit over that lane's points — `t0_ms`
+    (per-token / per-chunk overhead), `rate` (GB/s or TFLOP/s once the
+    overhead is paid), `eta` (rate as a fraction of the probed ceiling), and
+    the fit quality (`r2`, `n`). These two parameters are the lane; whether
+    they transfer across lanes is `loo`'s verdict."""
     rows = []
-    for (m, p, kind), g in points.groupby(["machine", "provider", "kind"]):
-        cls = _lane_class(p)
-        others = eff[
-            (eff.kind == kind)
-            & (eff.lane_class == cls)
-            & ~((eff.machine == m) & (eff.provider == p))
+    for (m, p, kind), g in pts.groupby(["machine", "provider", "kind"]):
+        t0, spu = _affine(g.x.to_numpy(), g.y.to_numpy())
+        pred = t0 + spu * g.x
+        ss_res = float(((g.y - pred) ** 2).sum())
+        ss_tot = float(((g.y - g.y.mean()) ** 2).sum())
+        rate = 1 / spu if spu > 0 else float("inf")
+        rows.append(
+            {
+                "machine": m,
+                "provider": p,
+                "kind": kind,
+                "lane_class": _lane_class(p),
+                "t0_ms": t0 * 1e3,
+                "rate": rate,
+                "ceiling": float(g.ceiling.iloc[0]),
+                "eta": rate / float(g.ceiling.iloc[0]),
+                "r2": 1 - ss_res / ss_tot if ss_tot > 0 else float("nan"),
+                "n": len(g),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def loo(pts: pd.DataFrame) -> pd.DataFrame:
+    """Leave-one-lane-out on the affine parameters: predict each lane's
+    measured points with `t0` and `eta` pooled (median) from the *other*
+    lanes of its class, that lane's own probed ceiling supplying the units.
+    Per (lane, kind): median and worst absolute relative error on the
+    predicted rate. The estimator transfers only as well as this says."""
+    fits = lane_fits(pts)
+    rows = []
+    for (m, p, kind), g in pts.groupby(["machine", "provider", "kind"]):
+        others = fits[
+            (fits.kind == kind)
+            & (fits.lane_class == _lane_class(p))
+            & ~((fits.machine == m) & (fits.provider == p))
+            # An overhead-dominated lane (eta = inf) or one the affine model
+            # doesn't fit (low r2) may borrow parameters, never lend them.
+            & np.isfinite(fits.eta)
+            & (fits.r2 >= LEND_R2)
         ]
         if others.empty:
             continue
+        t0_hat = others.t0_ms.median() / 1e3
         eta_hat = others.eta.median()
-        pred = g.measured / g.eta * eta_hat  # measured = eta·ceiling/cost·k
-        err = (pred / g.measured - 1).abs()
+        pred = t0_hat + g.x / (eta_hat * g.ceiling)
+        err = (pred / g.y - 1).abs()
         rows.append(
             {
                 "machine": m,
                 "provider": p,
                 "kind": kind,
                 "n_lanes_pooled": len(others),
+                "t0_hat_ms": float(t0_hat * 1e3),
                 "eta_hat": float(eta_hat),
-                "eta_own": float(g.eta.median()),
                 "median_err": float(err.median()),
                 "worst_err": float(err.max()),
             }

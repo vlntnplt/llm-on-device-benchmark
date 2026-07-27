@@ -1,7 +1,8 @@
-"""The estimator factors measurements into cost × ceiling × efficiency; on
-synthetic, perfectly bandwidth-bound data the factors recover exactly and
-leave-one-out error is zero."""
+"""The estimator fits `time = t0 + work / rate` per lane; on synthetic data the
+parameters recover exactly, degenerate lanes clamp instead of going negative,
+and leave-one-out reports transfer gaps rather than hiding them."""
 
+import numpy as np
 import pandas as pd
 
 from bench_analysis import estimate
@@ -53,19 +54,19 @@ def _probes(bw={"box1": 100.0, "box2": 50.0}):
                 "tflops": 10.0,
                 "gbs": gbs,
             }
-            for m, b in bw.items()
-            for kind, gbs in [("gemm", float("nan")), ("d2d", b)]
+            for m in bw
+            for kind, gbs in [("gemm", float("nan")), ("d2d", bw[m])]
         ]
     )
 
 
-def _sweeps(eta=0.8, bw={"box1": 100.0, "box2": 50.0}):
-    """Decode points whose tps is exactly eta·bw / bytes-per-token."""
+def _sweeps(t0=0.002, eta=0.8, bw={"box1": 100.0, "box2": 50.0}):
+    """Decode points generated exactly from the affine law."""
     costs = estimate.model_costs(_results(), _memory()).iloc[0]
     rows = []
     for m, b in bw.items():
-        for fill in (512, 4096):
-            tps = eta * b * 1024 / estimate.decode_read_mb(costs, fill)
+        for fill in (512, 2048, 8192):
+            secs = t0 + (estimate.decode_read_mb(costs, fill) / 1024) / (eta * b)
             rows.append(
                 {
                     "machine": m,
@@ -74,12 +75,16 @@ def _sweeps(eta=0.8, bw={"box1": 100.0, "box2": 50.0}):
                     "quant": "q4",
                     "kind": "decode",
                     "kv_fill": fill,
-                    "tps_p50": tps,
+                    "tps_p50": 1.0 / secs,
                     "chunk_ms": None,
                     "tokens": None,
                 }
             )
     return pd.DataFrame(rows)
+
+
+def _pts(sweeps):
+    return estimate.points(_results(), sweeps, _memory(), _probes())
 
 
 def test_kv_fit_recovers_slope_and_state():
@@ -88,27 +93,44 @@ def test_kv_fit_recovers_slope_and_state():
     assert abs(fit.kv_state_mb - 10.0) < 1e-6
 
 
-def test_efficiency_recovered_exactly():
-    pts = estimate.lane_points(_results(), _sweeps(eta=0.8), _memory(), _probes())
-    eff = estimate.efficiency(pts)
-    assert len(eff) == 2
-    assert (eff.eta - 0.8).abs().max() < 1e-9
+def test_lane_fits_recover_overhead_and_rate():
+    fits = estimate.lane_fits(_pts(_sweeps(t0=0.002, eta=0.8))).set_index("machine")
+    assert abs(fits.loc["box1"].t0_ms - 2.0) < 1e-6
+    assert abs(fits.loc["box1"].rate - 80.0) < 1e-6  # 0.8 × 100 GB/s
+    assert abs(fits.loc["box1"].eta - 0.8) < 1e-9
+    assert fits.r2.min() > 1 - 1e-9
 
 
-def test_loo_zero_error_when_eta_transfers():
-    pts = estimate.lane_points(_results(), _sweeps(eta=0.8), _memory(), _probes())
-    out = estimate.loo(pts)
+def test_overhead_dominated_lane_clamps_not_negative():
+    # Constant time regardless of bytes: slope is unidentifiable — the fit
+    # must degrade to t0 = mean, rate = inf, never a negative rate.
+    s = _sweeps(bw={"box1": 100.0})
+    s["tps_p50"] = 10.0
+    fits = estimate.lane_fits(_pts(s))
+    assert abs(fits.iloc[0].t0_ms - 100.0) < 1e-6
+    assert np.isinf(fits.iloc[0].rate)
+
+
+def test_loo_zero_error_when_parameters_transfer():
+    out = estimate.loo(_pts(_sweeps(t0=0.002, eta=0.8)))
     assert len(out) == 2
     assert out.median_err.max() < 1e-9
-    assert (out.n_lanes_pooled == 1).all()
 
 
 def test_loo_reports_the_transfer_gap():
-    # box2's stack only achieves half of box1's efficiency: predicting either
-    # from the other must be off by the ratio, not hidden.
     s1 = _sweeps(eta=0.8, bw={"box1": 100.0})
     s2 = _sweeps(eta=0.4, bw={"box2": 50.0})
-    pts = estimate.lane_points(_results(), pd.concat([s1, s2]), _memory(), _probes())
-    out = estimate.loo(pts).set_index("machine")
-    assert abs(out.loc["box1"].median_err - 0.5) < 1e-6  # predicted at half speed
-    assert abs(out.loc["box2"].median_err - 1.0) < 1e-6  # predicted at double
+    out = estimate.loo(_pts(pd.concat([s1, s2]))).set_index("machine")
+    assert out.loc["box1"].median_err > 0.2  # predicted too slow
+    assert out.loc["box2"].median_err > 0.2  # predicted too fast
+
+
+def test_degenerate_lane_borrows_but_never_lends():
+    good = _sweeps(t0=0.002, eta=0.8, bw={"box1": 100.0})
+    flat = _sweeps(bw={"box2": 50.0})
+    flat["tps_p50"] = 10.0
+    out = estimate.loo(_pts(pd.concat([good, flat]))).set_index("machine")
+    # box1's pool would be only the degenerate box2 → excluded → no row.
+    assert "box1" not in out.index
+    # box2 borrows box1's finite parameters and its gap is reported.
+    assert np.isfinite(out.loc["box2"].median_err)
