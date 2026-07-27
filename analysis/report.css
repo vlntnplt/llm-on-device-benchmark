@@ -126,16 +126,3 @@
 .sw-panel {
   display: none;
 }
-
-/* ── Page-level backend filter ────────────────────────────────────────────────
-   One switch drives every variants() block in the report. marimo renders each
-   cell into its own subtree, so a sibling selector cannot reach across cells;
-   :has() on the root can. */
-html:has(#backend-ggml:checked) [data-backend="all"],
-html:has(#backend-all:checked) [data-backend="ggml"] {
-  display: none;
-}
-
-.sw-global {
-  margin: 0 0 1rem;
-}

@@ -15,12 +15,7 @@ scoped `<style>`; the shared look lives in `report.css`.
 
 import re
 
-__all__ = ["BACKEND_GROUP", "backend_filter", "only_with_tjs", "slug", "tabs", "variants"]
-
-# The global backend filter's radio ids are referenced by static rules in
-# report.css, so they are fixed here rather than generated.
-BACKEND_GROUP = "backend"
-_ALL, _GGML = f"{BACKEND_GROUP}-all", f"{BACKEND_GROUP}-ggml"
+__all__ = ["slug", "tabs"]
 
 
 def slug(text: str) -> str:
@@ -70,47 +65,4 @@ def tabs(panels: dict[str, str], *, group: str, active: str | None = None) -> st
         f'<div class="sw-bar">{bar}</div>'
         f'<div class="sw-body">{body}</div>'
         f"</div>"
-    )
-
-
-def variants(both: str, ggml_only: str) -> str:
-    """Pair a both-backends rendering with a ggml-only one.
-
-    Only one is ever visible; `report.css` picks which, keyed off the page-level
-    filter from `backend_filter()`. Both are pre-rendered because a chart's row
-    order, scale, and per-model winner are computed over the rows it shows —
-    hiding tjs rows in the browser would leave all three wrong.
-    """
-    return (
-        f'<div data-backend="all">{both}</div>'
-        f'<div data-backend="ggml">{ggml_only}</div>'
-    )
-
-
-def only_with_tjs(html: str) -> str:
-    """Hide content once the reader filters tjs out.
-
-    For whole sections that exist to compare the two backends — with tjs gone
-    there is no comparison left to show, only a heading over an empty chart.
-    Markdown keeps inline HTML, so a dangling cross-reference inside a sentence
-    can wear `<span data-backend="all">` directly instead of splitting the cell.
-    """
-    return f'<div data-backend="all">{html}</div>'
-
-
-def backend_filter() -> str:
-    """The page-level backend switch driving every `variants()` block.
-
-    Lives once at the top of the report; `report.css` reaches the panels through
-    `:has()` on the root, since marimo renders each cell into its own subtree and
-    a sibling selector cannot cross that boundary.
-    """
-    return (
-        f'<div class="sw-group sw-global">'
-        f'<input class="sw-radio" type="radio" name="{BACKEND_GROUP}" id="{_ALL}" checked>'
-        f'<input class="sw-radio" type="radio" name="{BACKEND_GROUP}" id="{_GGML}">'
-        f'<div class="sw-bar"><span class="sw-legend">show</span>'
-        f'<label class="sw-tab" for="{_ALL}">both backends</label>'
-        f'<label class="sw-tab" for="{_GGML}">ggml only</label>'
-        f"</div></div>"
     )

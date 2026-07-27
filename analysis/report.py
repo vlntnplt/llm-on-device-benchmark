@@ -1,7 +1,7 @@
 """Cross-machine benchmark — exploration & comparison.
 
 A marimo notebook (a plain .py file — no jupytext pairing, diffs cleanly). The
-tested package does the work: `bench_analysis.load` builds the tidy frame,
+tested package does the work: `bench_analysis.load` builds the tidy frames,
 `bench_analysis.prep` derives the views, `bench_analysis.charts` owns the visual
 language. This notebook just arranges them and writes the prose — it is the
 disposable part.
@@ -11,20 +11,17 @@ disposable part.
 
 Export to HTML to hand the team a static snapshot; add `--no-include-code` so it
 reads as a report rather than a notebook. The export has no kernel, so nothing
-here may depend on a reactive widget — a `mo.ui` element cannot switch anything
-in it, and clicking one raises "Static notebook: this notebook is not connected
-to a kernel". Every switch in the report is therefore a `bench_analysis.switcher`
-group: panels pre-rendered for each context size and each backend filter, with
-plain radios and CSS doing the switching.
+here may depend on a reactive widget — every switch in the report is a
+`bench_analysis.switcher` group: panels pre-rendered, plain radios and CSS doing
+the switching.
 
-Five sections, each a short claim backed by a chart, every number computed live
-from the published submissions:
+Four sections, one per kind of measurement, every number computed live from
+the published submissions:
 
-    1. time to an answer, stacked by phase (where does the time go?)
-    2. memory while decoding (what must the device fit?)
-    3. backend reliability across machines (which backend always answers?)
-    4. ggml vs tjs lane by lane (same silicon — what does the backend cost?)
-    5. ggml GPU vs CPU on the same silicon (what does a CPU fallback cost?)
+    1. the machines — hardware, installed memory, probed device ceilings
+    2. the measured cost curves — prefill vs prompt length, decode vs KV fill
+    3. the validation job — end-to-end time, memory, and reliability
+    4. GPU vs CPU on the same silicon — what a CPU fallback costs
 """
 
 import marimo
@@ -44,9 +41,18 @@ def _():
     import marimo as mo
     import pandas as pd
 
-    from bench_analysis import charts, load_results, prep, switcher
+    from bench_analysis import (
+        charts,
+        load_memory,
+        load_probes,
+        load_results,
+        load_sweeps,
+        prep,
+        switcher,
+    )
 
-    return Path, charts, load_results, mo, pd, prep, switcher
+    return (Path, charts, load_memory, load_probes, load_results, load_sweeps,
+            mo, pd, prep, switcher)
 
 
 @app.cell
@@ -54,47 +60,35 @@ def _(mo):
     mo.md("""
     # Cross-machine on-device LLM benchmark
 
-    Two inference stacks run the same models, the same prompts, and the same
-    token budgets, on each contributor's machine:
+    One inference stack — **ggml**
+    ([llama.cpp](https://github.com/ggml-org/llama.cpp), a native C++ stack
+    consuming GGUF files) — measured on each contributor's machine. Every
+    measurement launches a fresh process, loads at most one model on one
+    compute provider (`cpu`, `vulkan`, `metal`, …), does one unit of work, and
+    exits. A **config** is one way of running a model: a machine, a provider,
+    and a quantization.
 
-    - **ggml** — [llama.cpp](https://github.com/ggml-org/llama.cpp), a native
-      C++ stack consuming GGUF files;
-    - **tjs** — [Transformers.js](https://github.com/huggingface/transformers.js)
-      running ONNX models on onnxruntime-node.
+    A submission measures a machine's **cost function**, and the report reads
+    as that argument, in order:
 
-    Each measurement launches a fresh process, loads the model, runs one task,
-    and exits. A **config** is one way of running a model: a machine, a
-    backend, a compute provider (`cpu`, `cuda`, `metal`, …), and a
-    quantization.
+    1. what the silicon can do bare — per-provider **device ceilings**, before
+       any model is loaded;
+    2. what inference actually achieves against those ceilings as the work
+       grows — the **cost curves**, swept with synthetic tokens to 8k context;
+    3. whether the curves predict reality — one **real job** (a ~1700-token
+       document summarized on a 256-token budget, decoded **greedily, to a
+       fixed count, EOS ignored**), measured end to end and plotted onto the
+       curves it should land on;
+    4. what that all costs when the GPU isn't available — the **CPU
+       fallback**, from the same measurements.
 
-    ### The task
+    Before any of that, a config must answer three trivial questions correctly
+    (the **brain-check**) or it is reported `unhealthy` rather than timed.
+    Prompts render through each model's own chat template with reasoning off.
 
-    Every task is a single turn of the same shape: a short system prompt, a
-    document, and `Summarize the document.` The model then decodes **greedily,
-    to a fixed token count, with EOS ignored** — so every config does exactly
-    the same amount of work, and a fast config cannot win by stopping early.
-    Prompts are rendered through each model's own chat template with reasoning
-    off, never by pasting role labels together.
-
-    Three sizes sweep the prompt across roughly 4×, with the decode budget
-    growing alongside it, so the charts can separate the cost of *reading* from
-    the cost of *writing*:
-
-    | task | document | prompt | tokens generated |
-    |---|---|---|---|
-    | `summarize-small` | the Antikythera mechanism | ~400 | 64 |
-    | `summarize-medium` | lighthouses | ~850 | 128 |
-    | `summarize-large` | the coming of standard time | ~1700 | 256 |
-
-    The summaries are never graded — a timing benchmark should not depend on
-    whether a 4B model writes well. What *is* gated is coherence: before any
-    timed run, a config has to answer three trivial questions correctly, and
-    one that fails is reported as `unhealthy` rather than timed. Sampled output
-    from the runs below:
-
-    Two reading notes. A quantization *label* is not the same math in both
-    stacks (`ggml q4` is Q4_K_M, `tjs q4` is MatMulNBits), so comparisons hold
-    *within* a label, never across labels. And every number on this page —
+    Two reading notes. A quantization *label* names stack-specific math
+    (`q4` is Q4_K_M), so comparisons hold *within* a label, qualified by the
+    stack versions each submission records. And every number on this page —
     including the ones in the text — is computed from the published submissions
     in `results/published/`, so the prose updates as new runs land.
     """)
@@ -102,29 +96,7 @@ def _(mo):
 
 
 @app.cell
-def _(mo, ok, task_order):
-    # The harness keeps one decoded completion per cell so a run stays
-    # eyeball-inspectable — proof the timings came off a model that was
-    # actually writing, not emitting filler at speed.
-    import html as _html
-
-    def _quote(task):
-        _s = ok[(ok.task == task) & ok.sample_completion.notna()]
-        if not len(_s):
-            return ""
-        _r = _s.iloc[0]
-        _who = f"{task} — {_r.machine} · {_r.backend} · {_r.model} {_r.quant}"
-        return (f'<blockquote><span class="who">{_html.escape(_who)}</span>'
-                f'{_html.escape(str(_r.sample_completion).strip())}</blockquote>')
-
-    mo.Html('<details class="sample-completions">'
-            '<summary>three generated summaries, one per size</summary>'
-            + "".join(_quote(_t) for _t in task_order) + "</details>")
-    return
-
-
-@app.cell
-def _(Path, load_results, mo, pd, prep):
+def _(Path, load_memory, load_probes, load_results, load_sweeps, mo, pd, prep):
     # Anchor to the notebook's own location (…/analysis) so the path holds no matter
     # the cwd `marimo edit` was launched from; results live one dir up.
     _nb = mo.notebook_dir()
@@ -132,7 +104,11 @@ def _(Path, load_results, mo, pd, prep):
 
     # The published submissions are the shared baseline: every PR-merged run under
     # results/published/<name>/.
-    _df = load_results(_root / "published")
+    _published = _root / "published"
+    _df = load_results(_published)
+    sweeps = load_sweeps(_published)
+    probes = load_probes(_published)
+    memory = load_memory(_published)
 
     # Preview a not-yet-published run alongside the baseline: point PREVIEW at a
     # local results dir (what `bench run --out` wrote — e.g. _root / "my-box") to
@@ -140,330 +116,293 @@ def _(Path, load_results, mo, pd, prep):
     # with a " · preview" tag so it's distinct from the published rows. None = off.
     PREVIEW = None
     if PREVIEW is not None:
-        _prev = load_results(PREVIEW)
-        _prev["machine"] = _prev["machine"].astype(str) + " · preview"
-        _df = pd.concat([_df, _prev], ignore_index=True)
+        for _loader, _target in [(load_results, "_df"), (load_sweeps, "sweeps"),
+                                 (load_probes, "probes"), (load_memory, "memory")]:
+            _prev = _loader(PREVIEW)
+            if len(_prev):
+                _prev["machine"] = _prev["machine"].astype(str) + " · preview"
+            if _target == "_df":
+                _df = pd.concat([_df, _prev], ignore_index=True)
+            elif _target == "sweeps":
+                sweeps = pd.concat([sweeps, _prev], ignore_index=True)
+            elif _target == "probes":
+                probes = pd.concat([probes, _prev], ignore_index=True)
+            else:
+                memory = pd.concat([memory, _prev], ignore_index=True)
 
     df, task_order = prep.prepare(_df)
     ok = df[df.status == "ok"].copy()
-
-    _machines = df[["machine", "submission"]].drop_duplicates().sort_values("machine")
-    mo.md("**Machines:** " + " · ".join(
-        f"{r.machine} (`{r.submission}`)" for r in _machines.itertuples()))
-    return df, ok, task_order
+    return df, memory, ok, probes, sweeps, task_order
 
 
 @app.cell
-def _(mo, switcher):
-    # tjs is slow and heavy enough to set the scale in §1 and §2, compressing the
-    # ggml configs against the axis. This drops it from those charts so the
-    # remaining spread is readable, and takes §4 with it — that section is the
-    # backend comparison, so without tjs there is nothing left of it to show.
-    mo.Html(switcher.backend_filter())
+def _(df, mo, probes):
+    # One row per machine: what it is (incl. installed memory — the source of
+    # its nominal bandwidth) — and below, per provider, what its silicon can do
+    # bare. The ceilings are the denominators for every number that follows.
+    _specs = df.drop_duplicates("submission")
+    _spec_rows = []
+    for _r in _specs.itertuples():
+        _ram = f"{_r.ram_gb:g} GB" if _r.ram_gb == _r.ram_gb else "?"
+        if _r.ram_channels == _r.ram_channels and _r.ram_channels:
+            _ram += f", {int(_r.ram_channels)}-ch @ {int(_r.ram_mts)} MT/s"
+        _spec_rows.append(f"| {_r.machine} | {_r.cpu} | {_r.gpu} | {_ram} |")
+
+    _ceil_rows = []
+    for (_m, _p), _g in probes[probes.status == "ok"].groupby(["machine", "provider"]):
+        _gemm = _g[_g.kind == "gemm"].tflops.max()
+        _copies = {r.kind: r.gbs for r in _g[_g.kind != "gemm"].itertuples()}
+        _ceil_rows.append(
+            f"| {_m} | {_p} | {_gemm:.1f} | {_copies.get('d2d', float('nan')):.0f} "
+            f"| {_copies.get('h2d', float('nan')):.1f} |")
+
+    mo.md(f"""
+    ## 1 · The machines
+
+    | machine | CPU | GPU | memory |
+    |---|---|---|---|
+    {chr(10).join(_spec_rows)}
+
+    What each provider's silicon does **bare** — an f16 matrix multiply shaped
+    like a prefill micro-batch, and buffer copies — before any model touches
+    it. Every model number below can be read against these ceilings, so a slow
+    curve is attributable to the runtime or to the device, not guessed at.
+    `d2d` counts read+write traffic (the STREAM convention); on CPU and
+    unified memory `h2d` is the same memory, so a gap between the two columns
+    is the PCIe link of a discrete card.
+
+    | machine | provider | gemm TFLOP/s | d2d GB/s | h2d GB/s |
+    |---|---|---|---|---|
+    {chr(10).join(_ceil_rows)}
+    """)
     return
 
 
 @app.cell
 def _(mo):
     mo.md("""
-    ## 1 · Time to an answer
+    ## 2 · The measured cost curves
 
-    How long from launching a cold process to a finished answer? Each bar is
-    one config running one model; its length is that full wall-clock time,
-    split into the five phases every run goes through, in order:
+    The sweep measures the cost function in **one instrumented pass**, with
+    synthetic tokens and no chat semantics: a full-context prefill timed
+    ubatch-chunk by ubatch-chunk — each chunk's cost is the marginal cost at
+    its depth, so the attention term is measured directly as the series'
+    slope. **Prefill** below plots the cumulative time: on a log-log axis a
+    purely compute-bound prefill is a straight line of slope 1, and any
+    upward bend is the attention term arriving. The pass leaves the cache
+    primed, so **decode** rate is measured at the reached depth and then at
+    trimmed fills below it — the downward drift is the per-token cost of
+    reading an ever-larger cache, measured rather than modelled.
 
-    - **model load** — read the weights from disk and place them on the device;
-    - **context init** — allocate the KV cache and compute graph;
-    - **warmup** — one minimal token pass that pays the one-time kernel/JIT
-      compilation;
-    - **prefill** — ingest the prompt; ends at the first generated token, so
-      this segment is the time-to-first-token (TTFT);
-    - **decode** — generate the answer, token by token.
+    **Memory** is swept the same way: the allocator's KV/state reservation,
+    re-measured at a ladder of context sizes — exact numbers, no repeats
+    needed. A line through the origin is plain per-token KV growth; a curve
+    that flattens at short context is a recurrent or hybrid architecture's
+    constant state showing itself. (Weights and compute workspace barely move
+    with context; they appear in §3's memory breakdown instead.)
 
-    The pale segments are setup, paid once per process; the vivid ones are the
-    generation work, paid on every request. The fastest config per model gets
-    a green total. Configs that produced no usable number stay visible as
-    full-width markers — amber when too slow to finish within the time budget,
-    purple when a run crashed or ran out of memory.
+    Curves stop early where the sweep budget ended: on slow silicon the
+    measured envelope shrinks instead of the time growing, so a short curve
+    is a small envelope, not missing data.
 
-    The tabs switch the prompt size. Rows keep one order across all tabs (the
-    overall rank), so a config stays on its row while you flip between sizes —
-    which can read slightly off a single tab's exact ranking. A stacked axis
-    can't be log-scaled, so slow configs visually compress fast ones; the
-    labels carry the exact totals<span data-backend="all">, and §4 is the
-    log-scale view where the small gaps become readable</span>.
+    The **diamonds** are not sweep points: they are §3's validation job — a
+    real chat-templated workload, measured end to end — placed at its
+    ≈1.7k-token prompt. A diamond on its curve is the sweep keeping its
+    promise; a diamond off it is the gap between synthetic and real work,
+    shown rather than assumed away.
     """)
     return
 
 
 @app.cell
-def _(charts, df, mo, ok, prep, switcher, task_order):
-    def _time_tabs(_ok, _df, group):
-        # One row order pinned across the tabs, so a config never jumps rows when
-        # the context size changes.
-        _phases = {_t: prep.time_phases(_ok[_ok.task == _t]) for _t in task_order}
-        _order = prep.shared_config_order(list(_phases.values()))
-        return switcher.tabs({
-            _t: mo.as_html(charts.stacked(
-                _phases[_t], charts.TIME_COLORS,
-                f"{_t}: time to a finished answer (ms) — "
-                "load + prefill + decode, lower is better",
-                dnf=prep.failures(_df[_df.task == _t]), config_order=_order)).text
-            for _t in task_order
-        }, group=group, active=task_order[len(task_order) // 2])
+def _(charts, memory, mo, ok, pd, sweeps, switcher):
+    # The job's ≈prompt length (tokens are backend-tokenized; the task doc is
+    # authored to ~1700). Its decode runs at fills 1700→1956; the overlay sits
+    # at the midpoint.
+    JOB_TOKENS = 1700
 
-    # Both filter states are rendered here, not in the browser: the row order,
-    # the axis scale, and the per-model winner are all computed over the rows a
-    # chart shows, so dropping tjs client-side would leave all three stale.
-    mo.Html(switcher.variants(
-        _time_tabs(ok, df, "time-all"),
-        _time_tabs(ok[ok.backend == "ggml"], df[df.backend == "ggml"], "time-ggml"),
-    ))
+    _s = sweeps.copy()
+    _s["config"] = _s.machine + " · " + _s.provider
+    _mem = (memory.assign(config=memory.machine + " · " + memory.provider)
+            if len(memory) else memory)
+    _job = ok.assign(config=ok.submission + " · " + ok.provider)
+    _pre_overlay = pd.DataFrame({
+        "config": _job.config, "model": _job.model,
+        "x": JOB_TOKENS, "y": _job.ttft_ms_p50}).dropna()
+    _dec_overlay = pd.DataFrame({
+        "config": _job.config, "model": _job.model,
+        "x": JOB_TOKENS + 128, "y": _job.decode_tps_p50}).dropna()
+
+    # One tab per model, both curves in the tab; lines = machine · provider.
+    def _curve_panel(model):
+        rows = _s[_s.model == model]
+        over = _pre_overlay[_pre_overlay.model == model]
+        html = mo.as_html(charts.curves(
+            rows[rows.kind == "prefill"],
+            "prefill: cumulative wall time vs prompt depth (log-log), one "
+            "instrumented pass — ◆ = the validation job's TTFT",
+            x="tokens", y="ttft_ms",
+            x_title="prompt tokens", y_title="ms",
+            overlay=over if len(over) else None)).text
+        dec = rows[rows.kind == "decode"]
+        dover = _dec_overlay[_dec_overlay.model == model]
+        if len(dec):
+            html += mo.as_html(charts.curves(
+                dec.assign(kv_fill=lambda d: d.kv_fill.clip(lower=64)),
+                "decode: tok/s vs KV-cache fill (log x; fill 0 shown at 64) — "
+                "◆ = the validation job",
+                x="kv_fill", y="tps_p50", lo="tps_min", hi="tps_max",
+                x_title="KV cache fill (tokens)", y_title="tok/s", log_y=False,
+                overlay=dover if len(dover) else None)).text
+        memc = _mem[_mem.model == model] if len(_mem) else _mem
+        if len(memc):
+            html += mo.as_html(charts.curves(
+                memc, "memory: KV/state reservation vs context (log-log) — "
+                "exact allocator numbers",
+                x="n_ctx", y="kv_mb",
+                x_title="context (tokens)", y_title="MB")).text
+        return html
+
+    _models = sorted(_s.model.dropna().unique())
+    mo.Html(switcher.tabs({m: _curve_panel(m) for m in _models}, group="curves")
+            if _models else "")
+    return (JOB_TOKENS,)
+
+
+@app.cell
+def _(JOB_TOKENS, df, mo, ok, prep, sweeps, task_order):
+    import math as _math
+
+    # The reliability verdict is one sentence when everything scored; failures
+    # get named only when they exist.
+    _counts = prep.status_cells(df)
+    _bad_cells = _counts[_counts.status != "ok"]
+    _ok_n, _all_n = int(_counts[_counts.status == "ok"].n.sum()), int(_counts.n.sum())
+    _n_machines = df.machine.nunique()
+    _mach = f"{_n_machines} machine" + ("s" if _n_machines != 1 else "")
+
+    _verdict = f"**{_ok_n}/{_all_n} jobs scored** across {_mach}."
+    if len(_bad_cells):
+        _verdict += " The misses: " + "; ".join(
+            f"{r.n}× {r.who} {r.status.replace('_', ' ')}" for r in _bad_cells.itertuples()) + "."
+    _bad_sweeps = df[df.sweep_status.isin(["too_slow", "errored"])]
+    if len(_bad_sweeps):
+        _verdict += " Sweeps that did not complete: " + "; ".join(
+            f"{r.machine} · {r.provider} · {r.model} ({r.sweep_status.replace('_', ' ')})"
+            for r in _bad_sweeps.itertuples()) + "."
+
+    # How far each job TTFT sits from its own prefill curve, log-interpolated
+    # at the job's prompt length — the report's honesty figure, computed live.
+    def _interp(points, at):
+        pts = sorted(points)
+        for (x0, y0), (x1, y1) in zip(pts, pts[1:], strict=False):
+            if x0 <= at <= x1:
+                f = (_math.log(at) - _math.log(x0)) / (_math.log(x1) - _math.log(x0))
+                return _math.exp(_math.log(y0) + f * (_math.log(y1) - _math.log(y0)))
+        return None
+
+    _deltas = []
+    for _r in ok.itertuples():
+        _cs = sweeps[(sweeps.machine == _r.submission) & (sweeps.provider == _r.provider)
+                     & (sweeps.model == _r.model) & (sweeps.kind == "prefill")]
+        _pred = _interp(list(zip(_cs.tokens, _cs.ttft_ms, strict=True)), JOB_TOKENS)
+        if _pred and _r.ttft_ms_p50 == _r.ttft_ms_p50:
+            _deltas.append(abs(_r.ttft_ms_p50 / _pred - 1) * 100)
+    _agree = (f" Interpolating each config's prefill curve at the job's prompt "
+              f"length puts the measured TTFTs a median "
+              f"**{sorted(_deltas)[len(_deltas) // 2]:.0f}%** "
+              f"from the curve (worst {max(_deltas):.0f}%)."
+              if _deltas else "")
+
+    mo.md(f"""
+    ## 3 · The validation job
+
+    One real workload — `{task_order[0] if task_order else "—"}` — run end to
+    end on every config: the check that the curves above predict an actual
+    job, and the only place cold-start, load, and memory are measured.
+    {_verdict}{_agree}
+
+    Each bar is one config; its length is the full wall-clock time from a cold
+    process to a finished answer, split into the five phases every run goes
+    through: **model load** (weights to device), **context init** (KV cache +
+    graph), **warmup** (one-time kernel/JIT pass), **prefill** (ingest the
+    prompt — this segment is the TTFT), **decode** (generate). Pale = setup
+    paid once per process; vivid = the generation work paid on every request.
+    The fastest config per model gets a green total; configs with no usable
+    sample stay visible as full-width markers.
+    """)
+    return
+
+
+@app.cell
+def _(charts, df, mo, ok, prep, switcher):
+    # One tab per model; a shared config order keeps every config on the same
+    # row across tabs.
+    _models = sorted(df.model.dropna().unique())
+    _frames = {_m: prep.time_phases(ok[ok.model == _m]) for _m in _models}
+    _nonempty = [f for f in _frames.values() if len(f)]
+    _order = prep.shared_config_order(_nonempty) if _nonempty else None
+    _panels = {
+        _m: mo.as_html(charts.stacked(
+            _frames[_m], charts.TIME_COLORS,
+            "time to a finished answer (ms) — load + prefill + decode, lower is better",
+            dnf=prep.failures(df[df.model == _m]), config_order=_order)).text
+        for _m in _models
+    }
+    mo.Html(switcher.tabs(_panels, group="time") if _panels else "")
     return
 
 
 @app.cell
 def _(mo):
     mo.md("""
-    ## 2 · Memory while decoding
-
-    What does generation occupy while it runs, and what must the device be
-    able to hold? The solid segments are the **sustained** working set — the
-    median RAM (and VRAM, where the provider uses a separate GPU pool) sampled
-    while tokens were being generated: weights, KV cache, activations. The
-    pale segment tops the bar up to the highest value seen during decode, so
-    the bar total is the **peak** the device had to fit at some point.
-
-    The two differ when a transient is still draining as decode starts — for
-    example a provider that compiles kernels during the first full-context
-    prefill. A missing VRAM segment means the provider has no separate VRAM
-    pool to report (CPU runs, unified memory), not missing data. Prefill
-    itself can peak higher than decode<span data-backend="all">; §4's
-    footprint view uses the high-water mark across both phases</span>.
+    The memory the job needs, said two ways. The **bars** are computed from
+    the allocator's own reservations, reported by the runtime and pooled over
+    host and device buffers: **weights**, the **KV cache**, and the
+    **compute** workspace. Each sweep measures that breakdown at a ladder of
+    context sizes — the memory cost curve rides in every submission for
+    fitting — and the bars show the point at the job's context (2048). The
+    **tick** is measured from outside: the sustained RSS+VRAM the sampler saw
+    while the job decoded. The distance between a tick and its bar end is the
+    part of the footprint the allocator doesn't own (runtime, tokenizer,
+    host-side scaffolding) — shown, not modelled away.
     """)
     return
 
 
 @app.cell
-def _(charts, mo, ok, prep, switcher, task_order):
-    def _memory_tabs(_ok, group):
-        _phases = {_t: prep.memory_phases(_ok[_ok.task == _t]) for _t in task_order}
-        _order = prep.shared_config_order(list(_phases.values()))
-        return switcher.tabs({
-            _t: mo.as_html(charts.stacked(
-                _phases[_t], charts.MEMORY_COLORS,
-                f"{_t}: decode footprint (MB): solid = sustained RAM+VRAM, "
-                "pale = transient peak — lower is better",
-                config_order=_order)).text
-            for _t in task_order
-        }, group=group, active=task_order[len(task_order) // 2])
-
-    mo.Html(switcher.variants(
-        _memory_tabs(ok, "memory-all"),
-        _memory_tabs(ok[ok.backend == "ggml"], "memory-ggml"),
-    ))
+def _(charts, memory, mo, ok, prep):
+    # Config labels match the curves chart (machine · provider); the bars come
+    # from the sweep's memory curve, the ticks from the job's sampler.
+    _mem = memory.assign(config=memory.machine + " · " + memory.provider) \
+        if len(memory) else memory
+    _job = ok.assign(config=ok.submission + " · " + ok.provider)
+    _bars, _ticks = prep.memory_model(_mem, _job, at=2048)
+    mo.Html(mo.as_html(charts.stacked(
+        _bars, charts.MEMORY_COLORS,
+        "memory at the job's context (MB): bars = allocator breakdown, "
+        "tick = measured sustained footprint",
+        ticks=_ticks)).text) if len(_bars) else mo.md(
+        "*(these submissions carry no allocator memory curve)*")
     return
 
 
 @app.cell
-def _(df, prep):
-    # Reliability, computed not asserted. Unhealthy configs (failed brain-check)
-    # never ran a task, so they're listed apart from the attempted-cell tally.
-    counts = prep.status_cells(df)
-    n_machines = df.machine.nunique()
+def _(mo, ok):
+    # The harness keeps one decoded completion per job so a run stays
+    # eyeball-inspectable — proof the timings came off a model that was
+    # actually writing, not emitting filler at speed.
+    import html as _html
 
-    def _tally(_counts):
-        _lines = []
-        for _b, _sub in _counts.groupby("backend", observed=True):
-            _tasked = _sub[_sub.status != "unhealthy"]
-            _ok_n, _n = int(_tasked[_tasked.status == "ok"].n.sum()), int(_tasked.n.sum())
-            _miss = _tasked[_tasked.status != "ok"]
-            _miss_txt = ("; misses: " + ", ".join(
-                f"{r.n}× {r.provider} {r.status.replace('_', ' ')}"
-                for r in _miss.itertuples())) if len(_miss) else ""
-            _lines.append(f"- **{_b}: {_ok_n}/{_n} cells ok**{_miss_txt}.")
-        _unh = _counts[_counts.status == "unhealthy"]
-        if len(_unh):
-            _lines.append("- failed the brain-check (tasks never ran): " + ", ".join(
-                f"{r.n}× {r.who}" for r in _unh.itertuples()) + ".")
-        return "\n".join(_lines)
+    def _quote(row):
+        _who = f"{row.machine} · {row.model} {row.quant} · {row.provider}"
+        return (f'<blockquote><span class="who">{_html.escape(_who)}</span>'
+                f'{_html.escape(str(row.sample_completion).strip())}</blockquote>')
 
-    # A tally per filter state: a tjs row under a ggml-only chart would be a
-    # number the reader cannot see the source of.
-    reliability = _tally(counts)
-    reliability_ggml = _tally(counts[counts.backend == "ggml"])
-    return counts, n_machines, reliability, reliability_ggml
-
-
-@app.cell
-def _(mo, n_machines, reliability, reliability_ggml, switcher):
-    def _section3(tally):
-        return mo.as_html(mo.md(f"""
-    ## 3 · Backend reliability across machines
-
-    Speed only matters if a config produces an answer at all. Same models,
-    same prompts, {n_machines} machines: a **cell** is one attempt — one
-    (machine, model, prompt size) handed to one backend·provider. The tally
-    counts how every attempted cell ended: `ok` (produced timed samples),
-    `too slow` (hit the time budget, or ran below a usable tokens-per-second
-    floor), `errored` (crashed or ran out of memory). Configs that failed the
-    three-question sanity gate are listed apart — their timed cells never ran.
-
-    {tally}
-    """)).text
-
-    mo.Html(switcher.variants(_section3(reliability), _section3(reliability_ggml)))
-    return
-
-
-@app.cell
-def _(charts, counts, mo, switcher):
-    mo.Html(switcher.variants(
-        mo.as_html(charts.status_bars(counts)).text,
-        mo.as_html(charts.status_bars(counts[counts.backend == "ggml"])).text,
-    ))
-    return
-
-
-@app.cell
-def _(df, ok, prep):
-    lane_t = prep.lane_time(ok)
-    lane_m = prep.lane_memory(ok)
-    # A lane holds either the cpu provider or accelerated ones, never both.
-    lane_t["kind"] = lane_t.provider.eq("cpu").map({True: "cpu", False: "gpu"})
-    lane_m["kind"] = lane_m.provider.eq("cpu").map({True: "cpu", False: "gpu"})
-
-    # tjs/ggml ratios per (lane, model, task) cell where both backends answered.
-    def _h2h(frame, col):
-        w = frame.pivot_table(index=["lane", "model", "task"], columns="backend",
-                              values=col, observed=True)
-        if not {"ggml", "tjs"} <= set(w.columns):
-            return None
-        r = (w.tjs / w.ggml).dropna()
-        return r if len(r) else None
-
-    # The headline gaps, only claimed as universal when the data says so.
-    _rt = _h2h(lane_t, "total_s")
-    h2h_gap = ""
-    if _rt is not None:
-        _every = (" — in every lane, model, and context size"
-                  if _rt.min() > 1 else "")
-        h2h_gap = (f"ggml gets to the answer **×{_rt.min():.1f}–×{_rt.max():.1f} "
-                   f"faster** (median ×{_rt.median():.1f}){_every}.")
-
-    _rm = _h2h(lane_m, "peak_gb")
-    h2h_mem = ""
-    if _rm is not None:
-        h2h_mem = (f"tjs's lightest config peaks at "
-                   f"**×{_rm.min():.1f}–×{_rm.max():.1f}** ggml's footprint "
-                   f"(median ×{_rm.median():.1f}).")
-
-    # The summary split the pooled headline hides: the backend gap is a very
-    # different story on a CPU than on a GPU. Mean over matchup cells, like §5.
-    def _x(r):
-        return f"×{r.mean():.1f}" if r is not None else "—"
-
-    h2h_table = "\n".join(
-        f"| {_kind} lanes | {_x(_h2h(lane_t[lane_t.kind == _kind], 'total_s'))} "
-        f"| {_x(_h2h(lane_m[lane_m.kind == _kind], 'peak_gb'))} |"
-        for _kind in ("cpu", "gpu"))
-
-    # Which provider each backend's winner used in the GPU lanes: one provider
-    # everywhere is a deployable story; a different one per machine is not.
-    # (GPU-lane rows are exactly the non-cpu-provider rows, by construction.)
-    _gpu = lane_t[lane_t.provider != "cpu"]
-
-    def _providers(b):
-        s = (_gpu[_gpu.backend == b].groupby("lane", observed=True)
-             .provider.agg(lambda v: "/".join(sorted(set(v)))))
-        return ", ".join(f"{m}: **{p}**" for m, p in s.items())
-
-    h2h_providers = "\n".join(f"- fastest **{b}** provider — {_providers(b)}"
-                              for b in sorted(_gpu.backend.unique()))
-
-    # Walkover lanes (one backend never produced a usable sample there) are
-    # dropped from the charts — a lone dot says nothing about the gap — and
-    # disclosed here instead, with the failure mode pulled from the record.
-    _solo_lanes = sorted(set(lane_t[lane_t.n_backends < 2].lane))
-    _notes = []
-    for _lane in _solo_lanes:
-        _present = set(lane_t[lane_t.lane == _lane].backend)
-        for _b in sorted(set(lane_t.backend.unique()) - _present):
-            _st = df[(df.lane == _lane) & (df.backend == _b)].status
-            _why = "/".join(sorted(set(_st[_st != "ok"].str.replace("_", " ")))
-                            ) or "never ran"
-            _notes.append(f"**{_lane}** — no usable {_b} sample ({_why})")
-    h2h_note = ("Lanes without a matchup are left out of the charts: "
-                + "; ".join(_notes) + ".") if _notes else ""
-    return h2h_gap, h2h_mem, h2h_note, h2h_providers, h2h_table, lane_m, lane_t
-
-
-@app.cell
-def _(h2h_gap, h2h_note, h2h_providers, h2h_table, mo, switcher):
-    mo.Html(switcher.only_with_tjs(mo.as_html(mo.md(f"""
-    ## 4 · ggml vs tjs, lane by lane
-
-    A **lane** is one piece of silicon: a machine's CPU, or its GPU. Within a
-    lane both backends ran on exactly the same hardware, so the distance
-    between the two dots is attributable to the software stack — runtime,
-    model format, kernels — not the machine. Each dot is that backend's
-    fastest config for the model and prompt size; the small label on the
-    right is the gap as a multiplier. The axis is logarithmic, so equal
-    distances are equal *ratios* wherever they appear. The tabs switch the
-    prompt size. {h2h_gap}
-
-    Averaged over the cells where both backends answered (models × prompt
-    sizes), split by the kind of silicon:
-
-    | | time, tjs / ggml | peak footprint, tjs / ggml |
-    |---|---|---|
-    {h2h_table}
-
-    A GPU-lane matchup is only as comparable as the providers that won it —
-    each backend brings its own GPU path, so note which one each winner used:
-
-    {h2h_providers}
-
-    {h2h_note}
-    """)).text))
-    return
-
-
-@app.cell
-def _(charts, lane_t, mo, switcher, task_order):
-    _m = lane_t[lane_t.n_backends >= 2]
-    mo.Html(switcher.only_with_tjs(switcher.tabs({
-        _t: mo.as_html(charts.dumbbell(
-            _m[_m.task == _t],
-            f"{_t}: total time to a finished answer (s, log) — "
-            "each backend's fastest config per lane")).text
-        for _t in task_order
-    }, group="h2h-time", active=task_order[len(task_order) // 2])))
-    return
-
-
-@app.cell
-def _(h2h_mem, mo, switcher):
-    mo.Html(switcher.only_with_tjs(mo.as_html(mo.md(f"""
-    The same lanes, by **peak footprint** — the highest RAM+VRAM the run
-    touched across prefill *and* decode, transient spikes included: the
-    memory a device must actually have free to run the config at all. Dots
-    are each backend's lightest config. {h2h_mem}
-    """)).text))
-    return
-
-
-@app.cell
-def _(charts, lane_m, mo, switcher, task_order):
-    _m = lane_m[lane_m.n_backends >= 2]
-    mo.Html(switcher.only_with_tjs(switcher.tabs({
-        _t: mo.as_html(charts.dumbbell(
-            _m[_m.task == _t],
-            f"{_t}: peak footprint (GB, log) — high-water RAM+VRAM across "
-            "prefill and decode, each backend's lightest config per lane",
-            value="peak_gb", value_title="peak (GB)")).text
-        for _t in task_order
-    }, group="h2h-mem", active=task_order[len(task_order) // 2])))
+    _with_text = ok[ok.sample_completion.notna()].groupby("model", observed=True).head(1)
+    mo.Html('<details class="sample-completions">'
+            '<summary>generated summaries, one per model</summary>'
+            + "".join(_quote(r) for r in _with_text.itertuples()) + "</details>")
     return
 
 
@@ -471,9 +410,8 @@ def _(charts, lane_m, mo, switcher, task_order):
 def _(ok, prep):
     gvc = prep.gpu_vs_cpu(ok)
 
-    # One verdict row per machine: speedups averaged over models and context
-    # sizes. The phase asymmetry headline is computed, not asserted — it holds
-    # whatever runs land.
+    # One verdict row per machine: speedups averaged over models. The phase
+    # asymmetry headline is computed, not asserted — it holds whatever runs land.
     gvc_asym = (f"the GPU is **×{gvc.prefill_x.min():.1f}–{gvc.prefill_x.max():.0f}**"
                 f" faster at prefill (compute-bound) but only "
                 f"**×{gvc.decode_x.min():.1f}–{gvc.decode_x.max():.1f}** at decode "
@@ -493,11 +431,8 @@ def _(ok, prep):
 
 @app.cell
 def _(gvc_asym, gvc_table, mo):
-    # §4 is hidden once tjs is filtered out, so this section closes the gap and
-    # becomes §4 — a report that jumps from 3 to 5 reads as a rendering bug.
-    _n = '<span data-backend="all">5</span><span data-backend="ggml">4</span>'
     mo.md(f"""
-    ## {_n} · ggml: GPU vs CPU on the same silicon
+    ## 4 · GPU vs CPU on the same silicon
 
     On the machines that have both, what does running on the CPU instead of
     the GPU cost? The two generation phases stress different parts of the
@@ -505,38 +440,14 @@ def _(gvc_asym, gvc_table, mo):
     compute-bound; decode produces one token at a time and is bound by memory
     bandwidth — so the measured cost is lopsided: {gvc_asym}. A CPU fallback
     doesn't slow everything proportionally; the prompt-reading side moves
-    most. One row per machine, speedups averaged over models and prompt
-    sizes; **full turn** is prefill + decode together, the two phases
-    weighted by where the time actually goes.
+    most. One row per machine, speedups averaged over models; **full turn**
+    is prefill + decode together, the two phases weighted by where the time
+    actually goes.
 
     | machine | GPU | prefill speedup | decode speedup | full-turn speedup |
     |---|---|---|---|---|
     {gvc_table}
-
-    Below, the same comparison in absolute seconds, as a dumbbell per model:
-    one for time-to-first-token and one for
-    decode time — **slate** cpu, **teal** gpu. The dashed rule marks one
-    second, a common responsiveness reference: where a dot sits against it
-    is what a user actually waits.
     """)
-    return
-
-
-@app.cell
-def _(charts, mo, ok, prep, switcher, task_order):
-    fc = prep.fallback_cost(ok)
-    _ysort = [f"{_m} · {_p}" for _m in sorted(fc.model.unique())
-              for _p in ("TTFT", "decode")]
-    mo.Html(switcher.tabs({
-        _t: mo.as_html(charts.dumbbell(
-            fc[fc.task == _t],
-            f"{_t}: the fallback tax (s, log) — TTFT and decode time per "
-            "turn, cpu vs gpu; dashed = 1 s",
-            row="machine", value="seconds", value_title="time (s)", width=420,
-            y="leg", y_sort=_ysort, hue="side", colors=charts.CPU_GPU_COLORS,
-            ref_x=1.0)).text
-        for _t in task_order
-    }, group="fallback", active=task_order[len(task_order) // 2]))
     return
 
 

@@ -63,37 +63,7 @@ def test_tabs_rejects_labels_that_collide_once_slugified():
         switcher.tabs({"a b": "x", "a/b": "y"}, group="g")
 
 
-def test_variants_tags_both_renderings():
-    html = switcher.variants("<p>BOTH</p>", "<p>GGML</p>")
-    assert '<div data-backend="all"><p>BOTH</p></div>' in html
-    assert '<div data-backend="ggml"><p>GGML</p></div>' in html
-
-
-def test_backend_filter_ids_match_the_selectors_in_report_css():
-    from pathlib import Path
-
-    html = switcher.backend_filter()
-    css = (Path(__file__).resolve().parents[1] / "report.css").read_text()
-    for element_id in ("backend-all", "backend-ggml"):
-        assert f'id="{element_id}"' in html
-        assert f"#{element_id}:checked" in css
-
-
 def test_no_marimo_ui_element_is_produced():
-    html = switcher.tabs({"a": "x"}, group="g") + switcher.backend_filter()
+    html = switcher.tabs({"a": "x"}, group="g")
     assert "marimo-ui-element" not in html
     assert "marimo-tabs" not in html
-
-
-def test_only_with_tjs_tags_content_for_the_all_state():
-    assert switcher.only_with_tjs("<h2>4</h2>") == '<div data-backend="all"><h2>4</h2></div>'
-
-
-def test_only_with_tjs_is_hidden_by_the_same_rule_variants_use():
-    from pathlib import Path
-
-    css = (Path(__file__).resolve().parents[1] / "report.css").read_text()
-    # One rule drives both: whatever hides a variants() "all" branch also hides
-    # a section wrapped by only_with_tjs.
-    assert '#backend-ggml:checked) [data-backend="all"]' in css
-    assert 'data-backend="all"' in switcher.only_with_tjs("x")

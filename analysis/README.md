@@ -20,35 +20,44 @@ uv run marimo export html --no-include-code report.py -o report.html
 
 ## Results layout
 
-`load_results(root)` fans over `root/**/*-results.json`. Collect N machines
-into one subdir per machine so filenames don't collide; the subdir name becomes
-the machine label (flat files load too — labelled by the in-file `host`):
+Three loaders fan over `root/**/*-results.json`. Collect N machines into one
+subdir per machine so filenames don't collide; the subdir name becomes the
+machine label (flat files load too — labelled by the in-file `host`):
 
 ```
 results/
-  3090-box/   ggml-results.json  tjs-results.json
-  m1-max/     ggml-results.json  tjs-results.json
+  3090-box/   ggml-results.json
+  m1-max/     ggml-results.json
 ```
 
-The frame is long/tidy: one row per `(machine, backend, model, quant, provider,
-device, task)`; every `[p50, max]` stat explodes into `<name>_p50` /
-`<name>_max`. Gaps are visible, not absent: a null stat (VRAM on a CPU EP) is
-NaN, never 0, and a cell that produced no timing still gets a row, flagged by
-`status` (`ok` / `too_slow` / `errored` / `unhealthy`). The loader pins the
-results `schema_version` — a file at another version is a loud error, not a
-silently-misaligned frame.
+- `load_results` — the validation job: one row per `(machine, backend, model,
+  quant, provider)`, `[p50, max]` stats exploded into `<name>_p50` /
+  `<name>_max`, geometry scalars as `geo_*`, machine memory config as
+  `ram_*`. Gaps are visible, not absent: a null stat (VRAM on a CPU EP) is
+  NaN, never 0, and a cell that produced no timing still gets a row, flagged
+  by `status` (`ok` / `too_slow` / `errored` / `unhealthy`).
+- `load_memory` — the memory cost curve: one row per allocator context point
+  (`n_ctx`, pooled `weights_mb` / `kv_mb` / `compute_mb`) from the sweep's
+  geometry. Exact allocator numbers — what an estimator fits, and what the
+  report reads at the job's context against the sampled footprint.
+- `load_sweeps` — one row per measured sweep point (prefill ms vs tokens,
+  decode tok/s vs KV fill), each with its min–max spread and repeat count.
+- `load_probes` — one row per device-ceiling point (GEMM TFLOP/s, copy GB/s).
+
+Every loader pins the results `schema_version` — a file at another version is
+a loud error, not a silently-misaligned frame.
 
 ## Layout: tested package, disposable notebook
 
 - `bench_analysis/load.py` — results JSON → the tidy frame.
-- `bench_analysis/prep.py` — derived views, pure pandas: task ordering, config
-  labels, hardware-descriptive machine names, phase splits for the stacked
-  charts, per-backend status tallies, head-to-head fastest configs, GPU-vs-CPU
+- `bench_analysis/prep.py` — derived views, pure pandas: config labels,
+  hardware-descriptive machine names, phase splits for the stacked charts,
+  the predicted-vs-measured memory model, status tallies, GPU-vs-CPU
   pairings.
 - `bench_analysis/charts.py` — Altair builders sharing one visual language
   (green = measured winner/ok, fixed hues per status and backend). Imported
   only by the notebook, so the package's core import stays pandas-only.
-- `bench_analysis/switcher.py` — the report's task and backend switches, as
+- `bench_analysis/switcher.py` — kernel-free tab switches, as
   plain radios over pre-rendered panels. Takes rendered HTML rather than
   importing marimo, so the core import stays pandas-only.
 - `report.py` — the marimo notebook: arranges prep's frames and charts'
@@ -67,19 +76,7 @@ The HTML export has no kernel, so a `mo.ui` element cannot switch anything in
 it — clicking one raises *"Static notebook: this notebook is not connected to a
 kernel"*. Everything switchable is therefore pre-rendered and revealed by CSS:
 
-- **context size** — one panel per task, per chart.
-- **backend** — a page-level *both backends / ggml only* switch. tjs sets the
-  scale in §1 and §2, compressing the ggml configs against the axis; dropping it
-  makes the remaining spread readable. Both states are rendered in Python
-  because row order, axis scale, and the per-model winner are computed over the
-  rows a chart shows.
-
-Filtering tjs out also removes what only existed to compare against it: §4 is
-the backend comparison, so it is hidden whole (`switcher.only_with_tjs`), §3's
-tally drops its tjs row, and the sentences elsewhere that point at §4 are
-wrapped in `<span data-backend="all">` — markdown keeps inline HTML, so a
-dangling clause costs a span rather than a duplicated cell. §5 renumbers itself
-to 4 in that state, since a report jumping from 3 to 5 reads as a bug.
+- tab groups (`switcher.tabs`) — one panel per pre-rendered view.
 
 The export also follows the reader's OS light/dark preference, from
 `[tool.marimo.display] theme = "system"` in `pyproject.toml`. That setting is
