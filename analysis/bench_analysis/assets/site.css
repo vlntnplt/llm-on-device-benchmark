@@ -1,0 +1,107 @@
+/* One stylesheet, both themes: colours are custom properties switched on
+   prefers-color-scheme; charts render on transparent backgrounds and pick
+   their text colours from the vega theme site.js selects. */
+
+:root {
+  --bg: #f6f8fa; --panel: #ffffff; --fg: #24292f; --muted: #57606a;
+  --border: #d6dade; --accent: #2a9d8f; --accent-fg: #14532d;
+  --active-bg: #eef2f6; --bad: #b5545d; --slow: #c9a227;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #11161b; --panel: #1a2129; --fg: #d7dde3; --muted: #8a939b;
+    --border: #2c353f; --accent-fg: #7fd1c4; --active-bg: #24303a;
+  }
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0 auto; max-width: 66rem; padding: 1.5rem 1.25rem 4rem;
+  background: var(--bg); color: var(--fg);
+  font: 15px/1.55 system-ui, sans-serif;
+}
+h1 { font-size: 1.45rem; margin: 0.5rem 0 0.25rem; }
+h2 { font-size: 1.1rem; margin-top: 2.25rem; }
+h3 { font-size: 0.95rem; margin-top: 1.5rem; }
+p, li { max-width: 46rem; }
+.muted { color: var(--muted); }
+a { color: var(--accent); }
+code { background: var(--active-bg); padding: 0.05rem 0.3rem; border-radius: 4px; }
+
+table { border-collapse: collapse; margin: 0.75rem 0; font-size: 0.9rem; }
+th, td {
+  padding: 0.3rem 0.65rem; border: 1px solid var(--border); text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+th { color: var(--muted); font-weight: 600; }
+td:first-child, th:first-child { text-align: left; }
+
+/* ── Tabs (real ones) ─────────────────────────────────────────────────── */
+nav.tabs {
+  display: flex; gap: 0.4rem; margin: 1.25rem 0 0.5rem; flex-wrap: wrap;
+  border-bottom: 1px solid var(--border); padding-bottom: 0.6rem;
+}
+nav.tabs button {
+  font: inherit; font-size: 0.9rem; cursor: pointer; color: var(--fg);
+  background: transparent; border: 1px solid var(--border);
+  border-radius: 0.4rem; padding: 0.3rem 0.85rem;
+}
+nav.tabs button:hover { border-color: var(--accent); }
+nav.tabs button[aria-selected="true"] {
+  background: var(--active-bg); border-color: var(--accent);
+  color: var(--accent-fg); font-weight: 600;
+}
+section[role="tabpanel"][hidden] { display: none; }
+
+/* ── Model cards ──────────────────────────────────────────────────────── */
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(21rem, 1fr));
+         gap: 1rem; margin-top: 1rem; }
+.card {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 0.6rem; padding: 1rem 1.1rem;
+}
+.card h3 { margin: 0 0 0.2rem; font-size: 1rem; }
+.card .quant { color: var(--muted); font-weight: normal; }
+.card dl {
+  display: grid; grid-template-columns: max-content 1fr; gap: 0.15rem 0.9rem;
+  margin: 0.6rem 0; font-size: 0.9rem;
+}
+.card dt { color: var(--muted); }
+.card dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.card table { width: 100%; font-size: 0.82rem; }
+.card .caveat { color: var(--slow); font-size: 0.85rem; }
+
+/* ── Fleet ────────────────────────────────────────────────────────────── */
+input {
+  width: 5.5rem; background: var(--bg); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 4px;
+  padding: 0.15rem 0.35rem; font: inherit; text-align: right;
+}
+input.name { width: 7rem; text-align: left; }
+.bar {
+  display: flex; height: 1.35rem; border-radius: 4px; overflow: hidden;
+  min-width: 18rem; border: 1px solid var(--border); background: var(--bg);
+}
+.note {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 6px; padding: 0.7rem 1rem; max-width: 46rem; font-size: 0.9rem;
+}
+.legend span { display: inline-block; margin-right: 1rem; font-size: 0.85rem; }
+.legend i {
+  display: inline-block; width: 0.8rem; height: 0.8rem; border-radius: 2px;
+  vertical-align: -0.05rem; margin-right: 0.3rem;
+}
+
+/* ── Charts & details ─────────────────────────────────────────────────── */
+.chart { margin: 0.75rem 0; }
+details { margin: 1rem 0; }
+details summary { cursor: pointer; color: var(--muted); }
+blockquote {
+  border-left: 3px solid var(--border); margin: 0.75rem 0; padding: 0.4rem 0.9rem;
+  background: var(--panel); font-size: 0.85rem; white-space: pre-wrap;
+}
+blockquote .who { display: block; color: var(--muted); margin-bottom: 0.3rem; }
+select {
+  font: inherit; background: var(--bg); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 4px; padding: 0.2rem 0.4rem;
+}

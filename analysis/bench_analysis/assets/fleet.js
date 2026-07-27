@@ -1,0 +1,135 @@
+/* The fleet calculator. Coefficients arrive in #fleet-data (JSON): per-model
+   costs, per-class pooled (t0, eta), and the leave-one-out error that must be
+   shown next to every prediction. The math mirrors bench_analysis.estimate:
+   time = t0 + work / (eta × ceiling). */
+
+const DATA = JSON.parse(document.getElementById("fleet-data").textContent);
+
+const COHORTS = [
+  ["iGPU · low", 0, 8, 30, 1.5],
+  ["iGPU · mid", 40, 16, 60, 3.5],
+  ["iGPU · high", 0, 32, 120, 8],
+  ["discrete · low", 10, 6, 200, 10],
+  ["discrete · mid", 20, 12, 400, 40],
+  ["discrete · high", 5, 16, 800, 130],
+  ["Apple · low", 0, 8, 68, 2.5],
+  ["Apple · mid", 15, 24, 270, 7],
+  ["Apple · high", 0, 36, 540, 16],
+];
+const TIERS = [["instant", 1, 20], ["usable", 3, 8], ["patient", 10, 3]];
+const COLORS = ["#2a9d8f", "#6aa84f", "#c9a227", "#8a939b", "#b5545d"];
+
+function el(tag, attrs, text) {
+  const e = document.createElement(tag);
+  for (const k in attrs || {}) e.setAttribute(k, attrs[k]);
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+const val = (id) => parseFloat(document.getElementById(id).value) || 0;
+const cls = (kind) =>
+  DATA.classes.find((c) => c.lane_class === "gpu" && c.kind === kind) ||
+  { t0_ms: 0, eta: 1 };
+
+function buildInputs() {
+  const tb = document.querySelector("#fleet-cohorts tbody");
+  COHORTS.forEach((c, i) => {
+    const tr = el("tr");
+    tr.appendChild(el("td", {}, c[0]));
+    for (let j = 1; j <= 4; j++) {
+      const td = el("td");
+      td.appendChild(el("input", { type: "number", id: `c${i}-${j}`, value: c[j], step: "any" }));
+      tr.appendChild(td);
+    }
+    tb.appendChild(tr);
+  });
+  const tt = document.querySelector("#fleet-tiers tbody");
+  TIERS.forEach((t, i) => {
+    const tr = el("tr");
+    const name = el("td");
+    name.appendChild(el("input", { id: `t${i}-name`, class: "name", value: t[0] }));
+    tr.appendChild(name);
+    for (let j = 1; j <= 2; j++) {
+      const td = el("td");
+      td.appendChild(el("input", { type: "number", id: `t${i}-${j}`, value: t[j], step: "any" }));
+      tr.appendChild(td);
+    }
+    tt.appendChild(tr);
+  });
+  document.getElementById("fleet-root").addEventListener("input", render);
+}
+
+function predict(m, mem, bw, tf, prompt, out) {
+  const ctx = prompt + out;
+  const kvGb = (m.kv_state_mb + (m.kv_mb_per_1k * ctx) / 1024) / 1024;
+  if (m.file_gb + kvGb + 1.0 > mem) return { fits: false };
+  const d = cls("decode"), p = cls("prefill");
+  const tps = 1 / (d.t0_ms / 1e3 + (m.body_gb + kvGb) / (d.eta * bw));
+  const ttft =
+    (Math.ceil(prompt / 512) * p.t0_ms) / 1e3 +
+    (2 * m.body_gparams * prompt) / 1e3 / (p.eta * tf);
+  return { fits: true, tps, ttft };
+}
+
+function render() {
+  const prompt = val("w-prompt"), out = val("w-out");
+  const tiers = TIERS.map((t, i) => ({
+    name: document.getElementById(`t${i}-name`).value,
+    ttft: val(`t${i}-1`),
+    tps: val(`t${i}-2`),
+  })).sort((a, b) => a.ttft - b.ttft);
+  const labels = [...tiers.map((t) => t.name), "too slow", "doesn't fit"];
+
+  const legend = document.getElementById("fleet-legend");
+  legend.replaceChildren(
+    ...labels.map((l, i) => {
+      const s = el("span");
+      s.appendChild(el("i", { style: `background:${COLORS[i]}` }));
+      s.appendChild(document.createTextNode(l));
+      return s;
+    })
+  );
+
+  const tb = document.querySelector("#fleet-results tbody");
+  tb.replaceChildren();
+  const total = COHORTS.reduce((s, _, i) => s + val(`c${i}-1`), 0);
+  for (const m of DATA.models) {
+    const buckets = new Array(tiers.length + 2).fill(0);
+    COHORTS.forEach((_, i) => {
+      const n = val(`c${i}-1`);
+      if (!n) return;
+      const r = predict(m, val(`c${i}-2`), val(`c${i}-3`), val(`c${i}-4`), prompt, out);
+      if (!r.fits) { buckets[tiers.length + 1] += n; return; }
+      const t = tiers.findIndex((t) => r.ttft <= t.ttft && r.tps >= t.tps);
+      buckets[t >= 0 ? t : tiers.length] += n;
+    });
+    const tr = el("tr");
+    tr.appendChild(el("td", {}, `${m.model} ${m.quant}`));
+    const bar = el("td");
+    const b = el("div", { class: "bar" });
+    buckets.forEach((n, i) => {
+      if (n > 0)
+        b.appendChild(
+          el("div", {
+            style: `width:${(100 * n) / total}%;background:${COLORS[i]}`,
+            title: `${labels[i]}: ${((100 * n) / total).toFixed(0)}%`,
+          })
+        );
+    });
+    bar.appendChild(b);
+    tr.appendChild(bar);
+    const served = buckets.slice(0, tiers.length).reduce((a, x) => a + x, 0);
+    tr.appendChild(el("td", {}, total ? `${((100 * served) / total).toFixed(0)}% in tier` : "—"));
+    tb.appendChild(tr);
+  }
+
+  const parts = DATA.loo.map(
+    (l) => `${l.lane_class} ${l.kind} ±${(100 * l.median_err).toFixed(0)}%`
+  );
+  document.getElementById("fleet-honesty").textContent =
+    "Model error (leave-one-out across the measured machines): " +
+    parts.join(" · ") +
+    ". Boundary calls within those margins can go either way.";
+}
+
+buildInputs();
+render();

@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>On-device LLM inference benchmark</title>
+<style>{{ css }}</style>
+<script>{{ vega_js }}</script>
+</head>
+<body>
+
+<h1>On-device LLM inference benchmark</h1>
+<p>What does it cost to run a small LLM on the machines people actually own?
+One inference stack — <a href="https://github.com/ggml-org/llama.cpp">llama.cpp</a>
+— measured the same way on every contributed machine, on its GPU and on its
+CPU. Every number on this page is computed from the published runs in
+<code>results/published/</code>; nothing is quoted from spec sheets.</p>
+
+<nav class="tabs" role="tablist">
+  <button role="tab" data-panel="tab-models">Models</button>
+  <button role="tab" data-panel="tab-fleet">Fleet</button>
+  <button role="tab" data-panel="tab-explore">Explore</button>
+</nav>
+
+<section id="tab-models" role="tabpanel">
+{% include "models.j2" %}
+</section>
+
+<section id="tab-fleet" role="tabpanel" hidden>
+{% include "fleet.j2" %}
+</section>
+
+<section id="tab-explore" role="tabpanel" hidden>
+{% include "explore.j2" %}
+</section>
+
+{% for id, spec in specs.items() %}
+<script type="application/json" id="{{ id }}">{{ spec }}</script>
+{% endfor %}
+<script type="application/json" id="fleet-data">{{ fleet_data }}</script>
+<script>{{ site_js }}</script>
+<script>{{ fleet_js }}</script>
+</body>
+</html>

@@ -40,8 +40,12 @@ def kv_fit(memory: pd.DataFrame) -> pd.DataFrame:
     points are pooled across machines; a negative fitted intercept is clamped
     (pure-attention models fit through the origin, noise-negative)."""
     rows = []
-    for (model, quant), g in memory.groupby(["model", "quant"]):
+    for (model, quant), g in memory.dropna(subset=["n_ctx", "kv_mb"]).groupby(
+        ["model", "quant"]
+    ):
         pts = g.groupby("n_ctx").kv_mb.median()
+        if len(pts) < 2:
+            continue
         slope, intercept = np.polyfit(pts.index, pts.values, 1)
         rows.append(
             {
@@ -138,8 +142,10 @@ def _affine(xs: np.ndarray, ys: np.ndarray) -> tuple[float, float]:
     non-negative: a lane whose points cannot identify the slope (an
     overhead-dominated device) degrades to `t0 = mean(y)`, slope 0, rather
     than a nonsense negative rate."""
+    keep = np.isfinite(xs) & np.isfinite(ys)
+    xs, ys = xs[keep], ys[keep]
     if len(xs) < 2 or np.ptp(xs) == 0:
-        return float(np.mean(ys)), 0.0
+        return float(np.mean(ys)) if len(xs) else 0.0, 0.0
     sec_per_unit, t0 = np.polyfit(xs, ys, 1)
     # Unidentifiable rate: negative, or contributing less than 0.1% of the
     # observed time across the whole x range — overhead is the whole story.
@@ -217,3 +223,60 @@ def loo(pts: pd.DataFrame) -> pd.DataFrame:
             }
         )
     return pd.DataFrame(rows)
+
+
+def class_params(fits: pd.DataFrame) -> pd.DataFrame:
+    """Per (lane_class, kind): the pooled parameters a fleet prediction uses —
+    median t0 and η over the lanes good enough to lend (finite rate, fit
+    r2 ≥ LEND_R2) — with the lane count behind them."""
+    lenders = fits[np.isfinite(fits.eta) & (fits.r2 >= LEND_R2)]
+    out = (
+        lenders.groupby(["lane_class", "kind"])
+        .agg(t0_ms=("t0_ms", "median"), eta=("eta", "median"), n_lanes=("eta", "size"))
+        .reset_index()
+    )
+    return out
+
+
+def fleet_coefficients(
+    results: pd.DataFrame, sweeps: pd.DataFrame, memory: pd.DataFrame, probes: pd.DataFrame
+) -> dict:
+    """Everything the fleet calculator needs, as one JSON-ready dict: per-model
+    costs, per-class pooled lane parameters, and the leave-one-out error that
+    must be shown next to every prediction."""
+    pts = points(results, sweeps, memory, probes)
+    fits = lane_fits(pts)
+    cls = class_params(fits)
+    errs = loo(pts)
+    errs["lane_class"] = errs.provider.map(_lane_class)
+    loo_by_class = (
+        errs.groupby(["lane_class", "kind"]).median_err.median().rename("median_err").reset_index()
+    )
+    return {
+        "models": [
+            {
+                "model": r.model,
+                "quant": r.quant,
+                "file_gb": r.file_bytes / 2**30,
+                "body_gb": r.body_bytes / 2**30,
+                "body_gparams": r.body_params / 1e9,
+                "kv_mb_per_1k": r.kv_slope_mb * 1024,
+                "kv_state_mb": r.kv_state_mb,
+            }
+            for r in model_costs(results, memory).itertuples()
+        ],
+        "classes": [
+            {
+                "lane_class": r.lane_class,
+                "kind": r.kind,
+                "t0_ms": r.t0_ms,
+                "eta": r.eta,
+                "n_lanes": int(r.n_lanes),
+            }
+            for r in cls.itertuples()
+        ],
+        "loo": [
+            {"lane_class": r.lane_class, "kind": r.kind, "median_err": r.median_err}
+            for r in loo_by_class.itertuples()
+        ],
+    }

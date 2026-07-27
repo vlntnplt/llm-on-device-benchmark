@@ -1,0 +1,53 @@
+<p>Each model, reduced to the numbers that decide whether and how it runs.
+<strong>On disk</strong> is the download; <strong>streamed per token</strong> is
+the weight bytes a single decoded token reads — with the KV growth it sets
+generation speed on any machine (generation is memory-bound: tokens/s ≈
+effective bandwidth ÷ bytes per token). <strong>KV per 1k tokens</strong> is
+how the footprint grows with context; a "state" term is a recurrent
+architecture's constant. <strong>Fits 8 / 16 GB</strong> allows 4k context and
+~1 GB of runtime overhead.</p>
+
+<table>
+  <thead><tr><th>model</th><th>on disk</th><th>streamed per token</th>
+  <th>KV per 1k tokens</th><th>fits 8 / 16 GB</th></tr></thead>
+  <tbody>
+  {% for m in models %}
+    <tr><td><strong>{{ m.model }}</strong> {{ m.quant }}</td>
+        <td>{{ "%.1f"|format(m.file_gb) }} GB</td>
+        <td>{{ "%.1f"|format(m.body_gb) }} GB</td>
+        <td>{{ "%.0f"|format(m.kv_mb_per_1k) }} MB{% if m.kv_state_mb >= 1 %} + {{ "%.0f"|format(m.kv_state_mb) }} MB state{% endif %}</td>
+        <td>{{ "✓" if m.fits8 else "✗" }} / {{ "✓" if m.fits16 else "✗" }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<p>Measured rates below are read off the sweep curves at reference points —
+how long to read a 2k / 8k prompt, and generation speed on an empty
+("fresh") vs filled ("deep") context. The full curves are under
+<strong>Explore</strong>; "—" means the sweep's budget ended before that
+depth on that lane.</p>
+
+<div class="cards">
+{% for m in models %}
+  <div class="card">
+    <h3>{{ m.model }} <span class="quant">{{ m.quant }}</span></h3>
+    <dl>
+      <dt>on disk</dt><dd>{{ "%.1f"|format(m.file_gb) }} GB</dd>
+      <dt>streamed / token</dt><dd>{{ "%.1f"|format(m.body_gb) }} GB</dd>
+      <dt>KV / 1k tokens</dt><dd>{{ "%.0f"|format(m.kv_mb_per_1k) }} MB</dd>
+      {% if m.kv_state_mb >= 1 %}<dt>recurrent state</dt><dd>{{ "%.0f"|format(m.kv_state_mb) }} MB</dd>{% endif %}
+    </dl>
+    <table>
+      <thead><tr><th>lane</th><th>2k prompt</th><th>8k prompt</th>
+      <th>fresh tok/s</th><th>deep tok/s</th></tr></thead>
+      <tbody>
+      {% for a in m.anchors %}
+        <tr><td>{{ a.lane }}</td><td>{{ a.t2k }}</td><td>{{ a.t8k }}</td>
+            <td>{{ a.fresh }}</td><td>{{ a.deep }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% if m.caveats %}<p class="caveat">{{ m.caveats }}</p>{% endif %}
+  </div>
+{% endfor %}
+</div>

@@ -1,22 +1,24 @@
 # analysis — compare benchmark results across machines
 
 A separate uv project from `harness/` on purpose: the harness ships to every
-benchmark box and stays lean, while analysis pulls in pandas (and optionally
-marimo/altair) and runs only where you crunch numbers. It is a pure consumer of
+benchmark box and stays lean, while analysis pulls in pandas/altair/jinja and
+runs only where you crunch numbers. It is a pure consumer of
 `results.schema.json` — it reads what the harness writes and never touches the
 contract.
 
 ```sh
-uv sync                        # just the loader + prep (pandas)
-uv sync --group notebook       # + marimo, altair, jinja2
+uv sync
 
-# explore + compare (report.py is a marimo notebook — a plain .py file):
-uv run marimo edit report.py
-
-# a static snapshot to hand off (no env needed to read it);
-# --no-include-code makes it read as a report rather than a notebook:
-uv run marimo export html --no-include-code report.py -o report.html
+# build the report — one self-contained HTML (tabs, charts, the fleet
+# calculator; no runtime dependencies, viewable offline):
+uv run python -m bench_analysis.site   # → results/published/report.html
 ```
+
+The site builder (`bench_analysis/site.py`) renders `templates/*.j2` over
+context computed by the tested modules; charts are altair/vega-lite specs
+embedded as JSON and mounted by `assets/site.js`. The vega libraries are
+fetched once at build time (versions pinned to the installed altair) and
+cached under `third_party/vega/` — nothing is fetched when the page is read.
 
 ## Results layout
 

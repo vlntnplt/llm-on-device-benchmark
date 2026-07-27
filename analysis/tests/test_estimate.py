@@ -43,7 +43,8 @@ def _results(model="A", quant="q4", body_bytes=1000 * MB):
     )
 
 
-def _probes(bw={"box1": 100.0, "box2": 50.0}):
+def _probes(bw=None):
+    bw = bw or {"box1": 100.0, "box2": 50.0}
     return pd.DataFrame(
         [
             {
@@ -60,8 +61,9 @@ def _probes(bw={"box1": 100.0, "box2": 50.0}):
     )
 
 
-def _sweeps(t0=0.002, eta=0.8, bw={"box1": 100.0, "box2": 50.0}):
+def _sweeps(t0=0.002, eta=0.8, bw=None):
     """Decode points generated exactly from the affine law."""
+    bw = bw or {"box1": 100.0, "box2": 50.0}
     costs = estimate.model_costs(_results(), _memory()).iloc[0]
     rows = []
     for m, b in bw.items():
