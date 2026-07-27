@@ -70,8 +70,22 @@ def _interp_log(pts: list[tuple[float, float]], at: float) -> float | None:
     return None
 
 
+def _lane_namer(df):
+    """(submission, provider) → a silicon-named lane label ("RTX 5080 ·
+    vulkan", "Ryzen 9 9950X · cpu") — nobody should have to read slugs."""
+    chips = prep._silicon(df.assign(machine=df.submission))
+
+    def lane(sub: str, provider: str) -> str:
+        cpu, gpu = chips.get(sub, (sub, ""))
+        chip = cpu if provider == "cpu" else (gpu or cpu)
+        return f"{chip} · {provider}"
+
+    return lane
+
+
 def _models_ctx(df, sweeps, memory) -> list[dict]:
     costs = estimate.model_costs(df, memory)
+    lane = _lane_namer(df)
 
     def fits(r, gb):
         need = r.file_bytes / 2**30 + r.kv_state_mb / 1024 + r.kv_slope_mb * 4096 / 1024 + 1.0
@@ -90,7 +104,7 @@ def _models_ctx(df, sweeps, memory) -> list[dict]:
             t8k = _interp_log(curve, 8192) if len(pre) else None
             deep = dec.loc[dec.kv_fill.idxmax()] if len(dec) else None
             anchors.append({
-                "lane": f"{m} · {p}",
+                "lane": lane(m, p),
                 "t2k": f"{t2k / 1e3:.1f} s" if t2k else "—",
                 "t8k": f"{t8k / 1e3:.1f} s" if t8k else "—",
                 "fresh": f"{dec.loc[dec.kv_fill.idxmin()].tps_p50:.0f}" if len(dec) else "—",
@@ -112,7 +126,9 @@ def _models_ctx(df, sweeps, memory) -> list[dict]:
 
 def _explore_ctx(df, ok, sweeps, memory, probes, task_order, specs: dict) -> dict:
     ctx: dict = {}
-    ctx["specs"] = [
+    lane = _lane_namer(df)
+    display = dict(zip(df.submission, df.machine, strict=False))
+    ctx["machine_rows"] = [
         {"machine": r.machine, "cpu": r.cpu, "gpu": r.gpu,
          "ram": (f"{r.ram_gb:g} GB" if r.ram_gb == r.ram_gb else "?")
                 + (f", {int(r.ram_channels)}-ch @ {int(r.ram_mts)} MT/s"
@@ -123,7 +139,7 @@ def _explore_ctx(df, ok, sweeps, memory, probes, task_order, specs: dict) -> dic
     for (m, p), g in probes[probes.status == "ok"].groupby(["machine", "provider"]):
         copies = {r.kind: r.gbs for r in g[g.kind != "gemm"].itertuples()}
         ctx["ceilings"].append({
-            "machine": m, "provider": p,
+            "machine": display.get(m, m), "provider": p,
             "gemm": f"{g[g.kind == 'gemm'].tflops.max():.1f}",
             "d2d": f"{copies.get('d2d', float('nan')):.0f}",
             "h2d": f"{copies.get('h2d', float('nan')):.1f}",
@@ -131,10 +147,12 @@ def _explore_ctx(df, ok, sweeps, memory, probes, task_order, specs: dict) -> dic
 
     # Cost curves, one panel of specs per model.
     s = sweeps.copy()
-    s["config"] = s.machine + " · " + s.provider
-    mem = memory.assign(config=memory.machine + " · " + memory.provider) \
+    s["config"] = [lane(m, p) for m, p in zip(s.machine, s.provider, strict=True)]
+    mem = memory.assign(config=[lane(m, p) for m, p in
+                                zip(memory.machine, memory.provider, strict=True)]) \
         if len(memory) else memory
-    job = ok.assign(config=ok.submission + " · " + ok.provider)
+    job = ok.assign(config=[lane(m, p) for m, p in
+                            zip(ok.submission, ok.provider, strict=True)])
     pre_overlay = pd.DataFrame({"config": job.config, "model": job.model,
                                 "x": JOB_TOKENS, "y": job.ttft_ms_p50}).dropna()
     dec_overlay = pd.DataFrame({"config": job.config, "model": job.model,

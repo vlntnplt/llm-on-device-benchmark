@@ -35,13 +35,20 @@ function buildInputs() {
   COHORTS.forEach((c, i) => {
     const tr = el("tr");
     tr.appendChild(el("td", {}, c[0]));
-    for (let j = 1; j <= 4; j++) {
-      const td = el("td");
+    const count = el("td");
+    count.appendChild(el("input", { type: "number", id: `c${i}-1`, value: c[1], step: "any" }));
+    tr.appendChild(count);
+    tr.appendChild(el("td", { class: "preset", id: `c${i}-preset` }));
+    for (let j = 2; j <= 4; j++) {
+      const td = el("td", { class: "adv" });
       td.appendChild(el("input", { type: "number", id: `c${i}-${j}`, value: c[j], step: "any" }));
       tr.appendChild(td);
     }
     tb.appendChild(tr);
   });
+  const adv = document.getElementById("fleet-advanced");
+  adv.addEventListener("change", () =>
+    document.getElementById("fleet-root").classList.toggle("advanced", adv.checked));
   const tt = document.querySelector("#fleet-tiers tbody");
   TIERS.forEach((t, i) => {
     const tr = el("tr");
@@ -71,6 +78,10 @@ function predict(m, mem, bw, tf, prompt, out) {
 }
 
 function render() {
+  COHORTS.forEach((_, i) => {
+    document.getElementById(`c${i}-preset`).textContent =
+      `${val(`c${i}-2`)} GB · ${val(`c${i}-3`)} GB/s · ${val(`c${i}-4`)} TF`;
+  });
   const prompt = val("w-prompt"), out = val("w-out");
   const tiers = TIERS.map((t, i) => ({
     name: document.getElementById(`t${i}-name`).value,

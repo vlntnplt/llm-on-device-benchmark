@@ -7,14 +7,19 @@ says how rough.</p>
 <div class="note" id="fleet-honesty"></div>
 
 <h2>Your fleet</h2>
-<p class="muted">Counts are whatever unit you like (machines, %). Ceilings are
-editable — the defaults are public-spec ballparks, not measurements. Memory is
-what the model may use (VRAM for discrete cards). No Apple machine is in the
-calibration set yet: those rows borrow the pooled GPU parameters and are pure
+<p class="muted">Just set counts — any unit you like (machines, %). Each
+cohort carries sane hardware assumptions, shown per row; tick
+<em>edit hardware assumptions</em> if yours differ (memory is what the model
+may use — VRAM for discrete cards). No Apple machine is in the calibration
+set yet: those rows borrow the pooled GPU parameters and are pure
 extrapolation until the first Mac submission lands.</p>
+<p><label><input type="checkbox" id="fleet-advanced"> edit hardware
+assumptions</label></p>
 <table id="fleet-cohorts">
-  <thead><tr><th>cohort</th><th>count</th><th>memory GB</th>
-  <th>bandwidth GB/s</th><th>compute TFLOP/s</th></tr></thead>
+  <thead><tr><th>cohort</th><th>count</th>
+  <th class="preset">assumed hardware</th>
+  <th class="adv">memory GB</th><th class="adv">bandwidth GB/s</th>
+  <th class="adv">compute TFLOP/s</th></tr></thead>
   <tbody></tbody>
 </table>
 

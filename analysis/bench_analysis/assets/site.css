@@ -92,6 +92,12 @@ input.name { width: 7rem; text-align: left; }
   vertical-align: -0.05rem; margin-right: 0.3rem;
 }
 
+/* Fleet: hardware columns hide behind the "edit hardware assumptions"
+   toggle; the per-row preset summary shows in their place. */
+#fleet-root:not(.advanced) .adv { display: none; }
+#fleet-root.advanced .preset { display: none; }
+#fleet-cohorts .preset { color: var(--muted); font-size: 0.82rem; }
+
 /* ── Charts & details ─────────────────────────────────────────────────── */
 .chart { margin: 0.75rem 0; }
 details { margin: 1rem 0; }

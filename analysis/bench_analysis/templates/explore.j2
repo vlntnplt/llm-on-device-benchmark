@@ -2,7 +2,7 @@
 <table>
   <thead><tr><th>machine</th><th>CPU</th><th>GPU</th><th>memory</th></tr></thead>
   <tbody>
-  {% for s in specs %}
+  {% for s in machine_rows %}
     <tr><td>{{ s.machine }}</td><td>{{ s.cpu }}</td><td>{{ s.gpu }}</td>
         <td>{{ s.ram }}</td></tr>
   {% endfor %}
