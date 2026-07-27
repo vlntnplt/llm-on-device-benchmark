@@ -4,6 +4,13 @@ Shared, version-controlled benchmark runs — the baseline the analysis notebook
 (`analysis/report.py`) reads by default. Everything else under `results/` is
 local and gitignored; this folder is the exception.
 
+A submission measures a machine's cost function: per provider a device ceiling
+probe (GEMM, copy bandwidth), and per (model, quant, provider) the model
+geometry as the runtime reports it, prefill/decode sweeps to 8k context, and
+one real validation job. Run with `sudo` where possible so the installed
+memory config (dmidecode) lands in the machine block — it is the source of the
+machine's nominal bandwidth.
+
 ## Submitting
 
 1. Run the benchmark locally: `bench run --backend <key> --out results/<my-box>`.
@@ -15,8 +22,9 @@ local and gitignored; this folder is the exception.
 
    This validates each `<backend>-results.json` against the contract, copies it
    and the matching `<backend>-raw.json.gz` into `results/published/<my-box>/`,
-   and generates a `README.md` summarizing the spec (machine, sampling, and a
-   `model × quant × provider` coverage table).
+   and generates a `README.md` summarizing the spec (machine incl. memory
+   config, ceiling probes, and a `model × quant × provider` sweep/job coverage
+   table).
 3. Regenerate the shared report so it includes the new submission:
 
    ```sh
