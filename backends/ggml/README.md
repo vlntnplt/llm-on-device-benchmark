@@ -32,9 +32,12 @@ root: `uv run --project harness bench check --backend ggml --models models`.
 
 ## Contract notes specific to ggml
 
-- **mmap stays on** (`use_mmap=true`) — as llama.cpp ships. Weights are
-  page-cache-backed (resident in RSS, not USS); the harness reports RSS for
-  exactly this reason (see [harness/README.md](../../harness/README.md)).
+- **mmap stays off** (`use_mmap=false`) — the shipped deployment
+  configuration. Weights are read into allocated buffers at load: the load
+  phase pays the full file read, RSS carries the whole weight footprint, and
+  the CPU backend's repacked quant tensors exist only in their repacked form
+  (no mapped originals kept alongside). See
+  [harness/README.md](../../harness/README.md) for how memory is reported.
 - `providers` walks the ggml backend registry (`ggml_backend_reg_*`,
   `ggml_backend_dev_get_props`).
 - Render prompts via `common_chat_templates_apply` (the model's own jinja

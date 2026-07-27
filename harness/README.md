@@ -13,15 +13,16 @@ A [uv](https://docs.astral.sh/uv/) project:
 uv sync
 uv run bench --help
 
-uv run bench fetch [model…] [--only ggml|tjs]            # pull artifacts into ../models
+uv run bench fetch [model…] [--only ggml]                # pull artifacts into ../models
 uv run bench check   --backend ggml --models ../models   # conformance-check a built exe
 uv run bench plan    --backend ggml --models ../models   # enumerate cells, don't run
 uv run bench run     --backend ggml --models ../models --out ../results
+                     # per provider: ceiling probe; per cell: gate → sweep → job
 uv run bench aggregate ../results/ggml-raw.json.gz       # re-derive results, no re-inference
 uv run bench publish ../results/my-box --name my-box     # stage a submission
 ```
 
-`run` takes `--iters K` (default 5), `--spawns S` (default 3), `--providers` to
+`run` takes `--iters K` (default 2), `--spawns S` (default 1), `--providers` to
 restrict the sweep, and `--machine` to name the box in the results (default:
 hostname). Progress goes to stderr; it writes `<backend>-raw.json.gz` (raw
 per-spawn traces) and `<backend>-results.json` (aggregated `[p50, max]`) into
@@ -32,11 +33,13 @@ per-spawn traces) and `<backend>-results.json` (aggregated `[p50, max]`) into
 1. **Enumerate** (`registry.py`) — `models.yaml` × fetched quants × each
    artifact's `providers` → the cell list.
 2. **Invoke** (`commands/run.py`, `spawn.py`) — per `(model, variant,
-   provider)`: run the brain-check gate; if healthy, run each timed task,
-   re-spawning S times. Reads `backends/*/backend.toml` for the invoke command.
-3. **Sample** (`sampling.py`) — a background thread reads `(wall_ns, rss,
-   vram)` over the process tree every ~10 ms, never touching the measured
-   process; `memory.py` aligns samples to event windows via the anchor.
+   provider)`: one brain-check gate spawn; if healthy, the sweep, then the
+   validation job (S spawns). Reads `backends/*/backend.toml` for the invoke
+   command.
+3. **Sample** (`sampling.py`) — on the job spawns only, a background thread
+   reads `(wall_ns, rss, vram)` over the process tree every ~10 ms, never
+   touching the measured process; `memory.py` aligns samples to event windows
+   via the anchor.
 4. **Aggregate** (`aggregate.py`, `metrics.py`) — pool to `[p50, max]` and
    write the results JSON.
 
@@ -51,23 +54,19 @@ harness-internal, not part of the contract.
 Two guards keep a CPU-bound stack from grinding minutes per cell measuring
 nothing new: the exe honours a soft `--deadline-ms` (always finishes iteration
 1, stops before later ones once the deadline passes — every emitted iteration
-is a whole decode), and the harness hard-kills at `--backstop-ms`. Once a task
-is unusable (killed, or below the ~4 tok/s floor), the monotonically-costlier
-tasks are skipped without running. Unusable cells are listed explicitly, never
-given an invented number — `timed_out_tasks[]` for genuine slowness,
-`errored_tasks[]` for a spawn that died producing no sample (crash/OOM/
-device-lost).
+is a whole decode), and the harness hard-kills at `--backstop-ms`. A bad
+first job spawn is not re-ground. Unusable cells keep their status, never an
+invented number — `too_slow` for genuine slowness (killed, or below the
+~4 tok/s floor), `errored` for a spawn that died producing no sample
+(crash/OOM/device-lost).
 
 ## Memory: RSS, on purpose
 
-`ggml` ships with mmap on — a real deliverable advantage we don't hobble for
-measurement parity — so its weights are page-cache-backed: resident in RSS,
-invisible to USS. `tjs` loads weights privately (USS ≈ RSS). USS would
-therefore hide the mmap backend's true footprint while adding nothing on tjs,
-so **RSS is the reported footprint** on every platform. On macOS the same
-logic holds (psutil's USS excludes mmap'd file-backed pages), and unified-
-memory Metal reads the mmap'd pages directly with no separate GPU allocation —
-RSS captures it.
+The backends run with mmap **off** — the shipped deployment configuration —
+so weights are read into ordinary allocations at load and the whole CPU-side
+footprint is resident: **RSS is the reported footprint** on every platform.
+(File reads still warm the page cache, so the first-ever load of a model is
+slower than a warm one — that difference is what `cold_start_ms` captures.)
 
 On a GPU EP the weights leave RSS — where they go depends on the memory model:
 
@@ -79,15 +78,14 @@ On a GPU EP the weights leave RSS — where they go depends on the memory model:
   collapses to the CPU-side scaffolding (a 4 GB model: 670 MB RSS, 4.1 GB GTT —
   a 7× undercount). GTT is system RAM the kernel apertures for the GPU, so
   resident GTT (read off DRM fdinfo) is **folded into RSS**; the added GTT is
-  disjoint from RSS, so there's no double-count. See `sampling.py:_drm_gtt_bytes`.
+  disjoint from RSS, so there's no double-count. See `sampling.py:_drm_bytes`.
 
 Phase figures: prefill is a ramp, so it reports its high-water mark; decode
 reports **peak** (what must fit on the device) and **sustained** (median —
 what generation occupies steady-state). They diverge when a transient rides
 into the decode window, e.g. an EP compiling kernels at the first full-context
-prefill. There is no isolated KV or weights figure — neither is comparable
-across the stacks (`ggml` preallocates KV with a clean plateau; `tjs`
-materializes `past_key_values` transiently inside a forward).
+prefill. There is no isolated KV or weights figure — the phase footprints already
+carry both (`ggml` preallocates KV with a clean plateau).
 
 ## Layout
 
@@ -100,7 +98,7 @@ bench/
   registry.py        models.yaml variants → `providers` → the cell list
   fetch.py           `bench fetch` — pull artifacts from the Hub per models.yaml
   tasks.py           load tasks, inline {document:}; gate vs timed role
-  spawn.py           run one cell, attach the sampler, validate events
+  spawn.py           run one cell, sample the job spawns, validate events
   sampling.py        bg (wall_ns,rss,vram) sampler; NVML per-PID VRAM, DRM GTT
   metrics.py         events → ttft / prefill_tps / decode_tps / completion
   memory.py          align samples to event windows → phase footprints

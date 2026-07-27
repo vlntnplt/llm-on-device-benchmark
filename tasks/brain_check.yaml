@@ -1,25 +1,16 @@
-# Provider-health gate. Three trivial single-turn tasks run once per
-# (model, provider) BEFORE any timed task. A provider is `healthy` only if all
-# three `expect` checks pass; otherwise the harness marks it unhealthy and skips
-# its timed cells. This catches broken plumbing (wrong chat template, misconfigured
-# provider, degenerate decode) up front — it is NOT a quality benchmark.
-- name: bc-sky
-  max_context_length: 256
+# Provider-health gate. One trivial three-turn task run once per
+# (model, provider) BEFORE anything timed — a single spawn, one model load. A
+# provider is `healthy` only if every turn's `expect` check passes; otherwise
+# the harness marks it unhealthy and skips its sweep and job. This catches
+# broken plumbing (wrong chat template, misconfigured provider, degenerate
+# decode) up front — it is NOT a quality benchmark.
+- name: brain-check
+  max_context_length: 512
   messages:
     - {role: system, content: "You are a helpful assistant."}
-    - {role: user, content: "What color is the daytime sky? Answer in one word."}
+    - {role: user, content: "What color is the daytime sky? Answer in one English word."}
     - {role: assistant, nb_tokens: 16, expect: ["blue"]}
-
-- name: bc-france
-  max_context_length: 256
-  messages:
-    - {role: system, content: "You are a helpful assistant."}
     - {role: user, content: "What is the capital of France? Answer in one word."}
     - {role: assistant, nb_tokens: 16, expect: ["paris"]}
-
-- name: bc-math
-  max_context_length: 256
-  messages:
-    - {role: system, content: "You are a helpful assistant."}
     - {role: user, content: "What is 2 + 2? Reply with just the number."}
     - {role: assistant, nb_tokens: 8, expect: ["4", "four"]}

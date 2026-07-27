@@ -21,17 +21,20 @@ def cmd_plan(args: argparse.Namespace) -> None:
     variants = registry.variants(args.models, backend.key)
     if not variants:
         raise SystemExit(f"no {backend.key!r} variants under {args.models}")
+    variants = registry.select(variants, args.model)
 
     log(f"backend {backend.key!r} → {' '.join(backend.cmd)}")
-    log(f"gate: {gate}   timed: {timed}")
+    log(f"gate: {gate}   job: {timed}")
     cells = 0
+    providers: set[str] = set()
     for v in variants:
         eps = registry.providers(backend, v.model_path)
         if args.providers:
             eps = [e for e in eps if e in args.providers]
+        providers.update(eps)
         print(f"{v.model:28} {v.quant:5}  providers={eps}")
-        cells += len(eps) * (len(gate) + len(timed))
+        cells += len(eps)
     print(
-        f"\n{len(variants)} variants → ~{cells} cells "
-        f"(× {args.spawns} spawns × {args.iters} iters on the timed ones)"
+        f"\n{len(variants)} variants → {cells} cells (each: gate + sweep + job), "
+        f"plus one ceiling probe per provider ({sorted(providers)})"
     )

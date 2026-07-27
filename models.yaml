@@ -1,44 +1,39 @@
 # Model registry — what the benchmark runs on, and where `bench fetch` pulls it
-# from (into the untracked models/<name>/{gguf,onnx}/; both stacks consume those
-# repo trees directly). Exes never read this file: the harness resolves the
+# from (into the untracked models/<name>/gguf/; the backend consumes those repo
+# trees directly). Exes never read this file: the harness resolves the
 # artifact path and hands the exe --model/--quant/--ep.
 #
-# Per model, up to two backend blocks — gguf (for ggml) and onnx (for tjs) —
-# each naming a Hub repo, a `common` glob list (shared config/tokenizer), and a
-# `quants` map. The quant key IS the wire enum (fp16|q8|q4|q4f16) — no
-# normalization; one variant per declared quant actually fetched, and a
-# declared-but-unfetched quant is skipped with a loud warning, never silently.
-# Note a label is not identical math across stacks (ggml q4 = Q4_K_M,
-# tjs q4 = MatMulNBits): compare within a label, qualified by stack versions.
+# Per model, a `gguf` block (for the ggml backend) naming a Hub repo, a
+# `common` glob list (shared config/tokenizer), and a `quants` map. The quant
+# key IS the wire enum (fp16|q8|q4) — no normalization; one variant per
+# declared quant actually fetched, and a declared-but-unfetched quant is
+# skipped with a loud warning, never silently. Quant labels are stack-specific
+# math (q4 = Q4_K_M; q2 = per-module QAT map, Q2_K/Q4_0/Q8_0): qualify
+# comparisons by stack versions.
 
 gemma4-E2B:
-  onnx:
-    repo: https://huggingface.co/onnx-community/gemma-4-E2B-it-ONNX
-    common: ["*.json"]
-    quants:
-      q4: { files: ["onnx/*q4.onnx", "onnx/*q4.onnx_data*"] }
   gguf:
     repo: https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF
     common: ["config.json"]
     quants:
       q4: { files: ["gemma-4-E2B-it-Q4_K_M.gguf"] }
-gemma4-E4B:
-  onnx:
-    repo: https://huggingface.co/onnx-community/gemma-4-E4B-it-ONNX
-    common: ["*.json"]
+gemma4-E2B-qat:
+  # QAT checkpoint (weights trained for low-bit inference) — its own entry, not a
+  # quant of gemma4-E2B: different weights, different Hub repo. The artifact
+  # mirrors the checkpoint's per-module QAT bit-map with GPU-supported types
+  # (Q4_0/Q2_K/Q8_0) — ternary TQ2_0 packs decode CPU-only.
+  gguf:
+    repo: https://huggingface.co/MonsieurTapir/gemma-4-E2B-it-qat-mobile-GGUF
+    common: ["config.json"]
     quants:
-      q4: { files: ["onnx/*q4.onnx", "onnx/*q4.onnx_data*"] }
+      q2: { files: ["gemma-4-E2B-it-qat-mobile-Q2_K_MIX.gguf"] }
+gemma4-E4B:
   gguf:
     repo: https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF
     common: ["config.json"]
     quants:
       q4: { files: ["gemma-4-E4B-it-Q4_K_M.gguf"] }
 Qwen3.5-4B:
-  onnx:
-    repo: https://huggingface.co/onnx-community/Qwen3.5-4B-ONNX
-    common: ["*.json"]
-    quants:
-      q4:    { files: ["onnx/*q4.onnx",    "onnx/*q4.onnx_data*"] }
   gguf:
     repo: https://huggingface.co/unsloth/Qwen3.5-4B-GGUF
     common: ["config.json"]

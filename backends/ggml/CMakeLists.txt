@@ -56,12 +56,14 @@ set(LLAMA_CURL           OFF CACHE BOOL "" FORCE)
 if(LLAMACPP_SOURCE_DIR)
   message(STATUS "bench-ggml: using local llama.cpp at ${LLAMACPP_SOURCE_DIR}")
   add_subdirectory(${LLAMACPP_SOURCE_DIR} ${CMAKE_BINARY_DIR}/llama.cpp)
+  set(LLAMACPP_SRC_INTERNAL "${LLAMACPP_SOURCE_DIR}/src")
 else()
   message(STATUS "bench-ggml: fetching llama.cpp @ ${LLAMACPP_GIT_TAG}")
   FetchContent_Declare(llamacpp
     GIT_REPOSITORY https://github.com/ggml-org/llama.cpp.git
     GIT_TAG        ${LLAMACPP_GIT_TAG})
   FetchContent_MakeAvailable(llamacpp)
+  set(LLAMACPP_SRC_INTERNAL "${llamacpp_SOURCE_DIR}/src")
 endif()
 
 # --- CLI11 (single header) ---------------------------------------------------
@@ -77,9 +79,11 @@ add_executable(bench-ggml main.cpp)
 
 # Linking llama-common transitively brings llama (→ ggml), its include dirs, the
 # common helpers, build-info, and the vendored nlohmann/json.hpp. cli11_SOURCE_DIR
-# holds the downloaded CLI11.hpp.
+# holds the downloaded CLI11.hpp. llama.cpp's src/ is on the path for
+# llama-ext.h (llama_get_memory_breakdown — LLAMA_API-exported but declared
+# outside the public include dir; same consumption pattern as common/fit.cpp).
 target_link_libraries(bench-ggml PRIVATE llama llama-common)
-target_include_directories(bench-ggml PRIVATE ${cli11_SOURCE_DIR})
+target_include_directories(bench-ggml PRIVATE ${cli11_SOURCE_DIR} ${LLAMACPP_SRC_INTERNAL})
 
 # Ad-hoc sign with get-task-allow so the harness can call task_for_pid and read
 # task_vm_info (full memory decomposition including Metal/IOKit allocations).

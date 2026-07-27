@@ -2,34 +2,19 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/llm-on-device-benchmark/schema/events.schema.json",
   "title": "Backend events object",
-  "description": "Emitted on stdout by `<exe> run` — one object per (model, provider, task). Durations are monotonic (mono_ns); the anchor maps them to wall time.",
-  "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "schema_version", "backend", "provider", "device", "model", "quant",
-    "task", "versions", "anchor", "healthy", "load", "iterations"
+  "description": "Emitted on stdout by `<exe> run|sweep|probe` — one object per spawn. `mode` selects the shape: `run` executes a chat task (brain-check or the job), `sweep` measures synthetic prefill/decode points, `probe` measures bare device ceilings with no model loaded. Durations are monotonic (mono_ns); the anchor maps them to wall time.",
+  "oneOf": [
+    { "$ref": "#/$defs/runObject" },
+    { "$ref": "#/$defs/sweepObject" },
+    { "$ref": "#/$defs/probeObject" }
   ],
-  "properties": {
-    "schema_version": {
-      "const": "1",
-      "description": "Events schema version."
-    },
-    "backend": { "enum": ["ggml", "tjs"] },
-    "provider": {
-      "type": "string",
-      "description": "The single EP this run used, e.g. cpu, cuda, metal, webgpu, coreml."
-    },
-    "device": { "type": "string", "description": "Human device label, e.g. 'AMD Ryzen 9 7950X' or 'NVIDIA RTX 5080'." },
-    "model": { "type": "string" },
-    "quant": { "enum": ["fp16", "q8", "q4", "q4f16"] },
-    "task": { "type": "string", "description": "Task name (matches tasks/*.yaml)." },
-    "versions": {
-      "type": "object",
-      "description": "Exact stack identity == `<exe> version`. Shape is backend-specific; threads is shared.",
-      "required": ["threads"],
-      "properties": {
-        "threads": { "type": "integer", "minimum": 1, "description": "Intra-op thread count, pinned to physical cores (shared across backends)." }
-      }
+  "$defs": {
+    "shared": {
+      "schema_version": { "const": "2", "description": "Events schema version." },
+      "backend": { "enum": ["ggml"] },
+      "provider": { "type": "string", "description": "The single EP this spawn used, e.g. cpu, cuda, metal, vulkan." },
+      "device": { "type": "string", "description": "Human device label, e.g. 'AMD Ryzen 9 7950X' or 'NVIDIA RTX 5080'." },
+      "quant": { "enum": ["fp16", "q8", "q4", "q2"] }
     },
     "anchor": {
       "type": "object",
@@ -41,49 +26,120 @@
         "mono_ns": { "type": "integer", "minimum": 0, "description": "CLOCK_MONOTONIC at t0, nanoseconds." }
       }
     },
-    "healthy": {
-      "type": "boolean",
-      "description": "This run's expects all passed (vacuously true when the task has no expects)."
+    "versions": {
+      "type": "object",
+      "description": "Exact stack identity == `<exe> version`. Shape is backend-specific; threads is shared.",
+      "required": ["threads"],
+      "properties": {
+        "threads": { "type": "integer", "minimum": 1, "description": "Intra-op thread count, pinned to physical cores." }
+      }
     },
-    "load": {
-      "type": "array",
-      "description": "Measured ONCE per process, before the K timed iterations.",
-      "items": { "$ref": "#/$defs/loadEvent" },
-      "minItems": 1
+    "span": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start_ns", "end_ns"],
+      "properties": {
+        "start_ns": { "type": "integer", "minimum": 0, "description": "Monotonic start stamp." },
+        "end_ns": { "type": "integer", "minimum": 0, "description": "Monotonic end stamp." }
+      }
     },
-    "iterations": {
-      "type": "array",
-      "description": "K timed repeats of the task; no model reload between them.",
-      "minItems": 1,
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["events"],
-        "properties": {
-          "events": {
-            "type": "array",
-            "description": "prefill / decode / turn-end, repeated per turn for multi-turn tasks (context_size grows).",
-            "minItems": 1,
-            "items": {
-              "oneOf": [
-                { "$ref": "#/$defs/prefillEvent" },
-                { "$ref": "#/$defs/decodeEvent" },
-                { "$ref": "#/$defs/turnEndEvent" }
-              ]
+    "geometry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["n_layer", "n_embd", "n_head", "n_head_kv", "n_swa", "n_ctx_train", "n_params", "file_bytes", "context", "layers", "tensors", "buffers"],
+      "description": "What the runtime knows about the model and this process's operating point, reported at load. Counted by the thing that runs the model — never hand-maintained.",
+      "properties": {
+        "n_layer": { "type": "integer", "minimum": 1 },
+        "n_embd": { "type": "integer", "minimum": 1 },
+        "n_head": { "type": "integer", "minimum": 1 },
+        "n_head_kv": { "type": "integer", "minimum": 0, "description": "KV heads (GQA); 0 for pure-recurrent models." },
+        "n_swa": { "type": "integer", "minimum": 0, "description": "Sliding-window size where the arch windows attention; 0 otherwise." },
+        "shared_kv_layers": { "type": "integer", "minimum": 0, "description": "Layers that reuse another layer's KV cache instead of growing their own (e.g. gemma4); 0 when none." },
+        "n_ctx_train": { "type": "integer", "minimum": 1, "description": "The context length the model was trained for." },
+        "n_params": { "type": "integer", "minimum": 1, "description": "Total parameter count as loaded." },
+        "file_bytes": { "type": "integer", "minimum": 1, "description": "The weight artifact's size on disk." },
+        "context": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["n_ctx", "n_batch", "n_ubatch"],
+          "description": "The operating point this process ran at. n_ubatch is the deployment default (512), never tied to n_ctx.",
+          "properties": {
+            "n_ctx": { "type": "integer", "minimum": 1 },
+            "n_batch": { "type": "integer", "minimum": 1 },
+            "n_ubatch": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "layers": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Per-layer attention typing, length n_layer — which layers grow a full KV cache (the quadratic/linear cost split the cost model needs).",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "window"],
+            "properties": {
+              "kind": { "enum": ["full", "swa", "recurrent"], "description": "full = growing KV + O(n²) attention; swa = windowed (constant KV past the window); recurrent = constant-size state, no KV growth." },
+              "window": { "type": "integer", "minimum": 0, "description": "Window size for swa layers; 0 otherwise." }
+            }
+          }
+        },
+        "tensors": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["embedding", "body", "head", "tied_head"],
+          "description": "Tensor inventory split by role, bytes as landed at this quant. body is what a prefill token multiplies; embedding is a lookup; head runs once per decoded token (in full when tied).",
+          "properties": {
+            "embedding": { "$ref": "#/$defs/tensorGroup" },
+            "body": { "$ref": "#/$defs/tensorGroup" },
+            "head": { "$ref": "#/$defs/tensorGroup" },
+            "tied_head": { "type": "boolean", "description": "LM head shares the embedding table (its bytes then live under embedding and are streamed every decode step)." }
+          }
+        },
+        "buffers": {
+          "$ref": "#/$defs/bufferList",
+          "description": "What the allocator actually reserved, per backend buffer type, at this context — weights, KV/state, and compute workspace. Empty when the runtime could not report a breakdown."
+        },
+        "memory_points": {
+          "type": "array",
+          "minItems": 1,
+          "description": "The allocator breakdown re-measured at a ladder of context sizes (sweep mode only) — the memory cost curve: weights constant, KV/state and compute workspace as measured functions of n_ctx. Exact allocator numbers; one context lives at a time.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["n_ctx", "n_batch", "n_ubatch", "buffers"],
+            "properties": {
+              "n_ctx": { "type": "integer", "minimum": 1 },
+              "n_batch": { "type": "integer", "minimum": 1 },
+              "n_ubatch": { "type": "integer", "minimum": 1 },
+              "buffers": { "$ref": "#/$defs/bufferList" }
             }
           }
         }
       }
-    }
-  },
-  "$defs": {
-    "span": {
+    },
+    "bufferList": {
+      "type": "array",
+      "description": "Per-backend-buffer-type allocator reservations.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "model_bytes", "context_bytes", "compute_bytes"],
+        "properties": {
+          "name": { "type": "string", "description": "Backend buffer type label, e.g. 'CPU', 'CUDA0', 'Metal'." },
+          "model_bytes": { "type": "integer", "minimum": 0 },
+          "context_bytes": { "type": "integer", "minimum": 0, "description": "KV cache + persistent context state." },
+          "compute_bytes": { "type": "integer", "minimum": 0, "description": "Compute workspace (graph buffers)." }
+        }
+      }
+    },
+    "tensorGroup": {
       "type": "object",
+      "additionalProperties": false,
+      "required": ["params", "bytes"],
       "properties": {
-        "start_ns": { "type": "integer", "minimum": 0, "description": "Monotonic start stamp." },
-        "end_ns": { "type": "integer", "minimum": 0, "description": "Monotonic end stamp." }
-      },
-      "required": ["start_ns", "end_ns"]
+        "params": { "type": "integer", "minimum": 0 },
+        "bytes": { "type": "integer", "minimum": 0 }
+      }
     },
     "loadEvent": {
       "type": "object",
@@ -102,7 +158,7 @@
       "properties": {
         "type": { "const": "prefill" },
         "context_size": { "type": "integer", "minimum": 0, "description": "KV-cache size in tokens BEFORE this prefill (0 on the first turn)." },
-        "tokens_count": { "type": "integer", "minimum": 1, "description": "Prompt tokens processed in this prefill batch." },
+        "tokens_count": { "type": "integer", "minimum": 1, "description": "Prompt tokens processed in this prefill." },
         "start_ns": { "type": "integer", "minimum": 0 },
         "end_ns": { "type": "integer", "minimum": 0 }
       }
@@ -113,7 +169,7 @@
       "required": ["type", "context_size", "tokens_count", "token_ns", "start_ns", "end_ns"],
       "properties": {
         "type": { "const": "decode" },
-        "context_size": { "type": "integer", "minimum": 0, "description": "KV-cache size in tokens at the start of decode (= prompt + prior turns)." },
+        "context_size": { "type": "integer", "minimum": 0, "description": "KV-cache size in tokens at the start of decode." },
         "tokens_count": { "type": "integer", "minimum": 1, "description": "Tokens decoded this turn; MUST equal the turn's nb_tokens." },
         "token_ns": {
           "type": "array",
@@ -141,6 +197,161 @@
         },
         "start_ns": { "type": "integer", "minimum": 0 },
         "end_ns": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "runObject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "backend", "mode", "provider", "device", "model", "quant", "task", "versions", "anchor", "healthy", "load", "geometry", "iterations"],
+      "description": "A chat task execution: the brain-check gate or the validation job.",
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/shared/schema_version" },
+        "backend": { "$ref": "#/$defs/shared/backend" },
+        "mode": { "const": "run" },
+        "provider": { "$ref": "#/$defs/shared/provider" },
+        "device": { "$ref": "#/$defs/shared/device" },
+        "model": { "type": "string" },
+        "quant": { "$ref": "#/$defs/shared/quant" },
+        "task": { "type": "string", "description": "Task name (matches tasks/*.yaml)." },
+        "versions": { "$ref": "#/$defs/versions" },
+        "anchor": { "$ref": "#/$defs/anchor" },
+        "healthy": { "type": "boolean", "description": "This run's expects all passed (vacuously true when the task has no expects)." },
+        "load": {
+          "type": "array",
+          "description": "Measured ONCE per process, before the timed iterations.",
+          "items": { "$ref": "#/$defs/loadEvent" },
+          "minItems": 1
+        },
+        "geometry": { "$ref": "#/$defs/geometry" },
+        "iterations": {
+          "type": "array",
+          "description": "Timed repeats of the task; no model reload between them.",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["events"],
+            "properties": {
+              "events": {
+                "type": "array",
+                "description": "prefill / decode / turn-end, repeated per turn for multi-turn tasks (context_size grows).",
+                "minItems": 1,
+                "items": {
+                  "oneOf": [
+                    { "$ref": "#/$defs/prefillEvent" },
+                    { "$ref": "#/$defs/decodeEvent" },
+                    { "$ref": "#/$defs/turnEndEvent" }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "sweepObject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "backend", "mode", "provider", "device", "model", "quant", "versions", "anchor", "load", "geometry", "prefill_chunks", "decode_points"],
+      "description": "Synthetic-token measurement of the cost function in ONE instrumented pass: a full-context prefill timed per ubatch-sized chunk (chunk cost vs context is the marginal cost curve — slope = the attention term; cumulative sum = TTFT vs prompt length), then decode rate at fills walked DOWN from the reached depth by trimming the primed cache. No chat semantics; nothing measured twice.",
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/shared/schema_version" },
+        "backend": { "$ref": "#/$defs/shared/backend" },
+        "mode": { "const": "sweep" },
+        "provider": { "$ref": "#/$defs/shared/provider" },
+        "device": { "$ref": "#/$defs/shared/device" },
+        "model": { "type": "string" },
+        "quant": { "$ref": "#/$defs/shared/quant" },
+        "versions": { "$ref": "#/$defs/versions" },
+        "anchor": { "$ref": "#/$defs/anchor" },
+        "load": {
+          "type": "array",
+          "description": "Measured ONCE per process, before any point.",
+          "items": { "$ref": "#/$defs/loadEvent" },
+          "minItems": 1
+        },
+        "geometry": { "$ref": "#/$defs/geometry" },
+        "prefill_chunks": {
+          "type": "array",
+          "minItems": 1,
+          "description": "The instrumented pass: contiguous ubatch-sized chunks, each a prefill event at its context_size (0, 512, 1024, …). The chunk series is the marginal cost curve; its cumulative sum is TTFT at each depth. Stops at the envelope cap or the sweep budget — a shorter series is a smaller measured envelope, not missing data.",
+          "items": { "$ref": "#/$defs/prefillEvent" }
+        },
+        "decode_points": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Decode-rate measurements walking DOWN from the pass's reached depth: measured there first, then at the standard fills below it after trimming the cache (recurrent/hybrid caches refuse partial trims — those fills are skipped, never re-primed).",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kv_fill", "tokens", "repeats"],
+            "properties": {
+              "kv_fill": { "type": "integer", "minimum": 0, "description": "KV-cache depth (tokens) before decode starts." },
+              "tokens": { "type": "integer", "minimum": 2, "description": "Tokens decoded per repeat; steady-state tps over 2..N." },
+              "repeats": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["token_ns", "start_ns", "end_ns"],
+                  "properties": {
+                    "token_ns": { "type": "array", "minItems": 2, "items": { "type": "integer", "minimum": 0 } },
+                    "start_ns": { "type": "integer", "minimum": 0 },
+                    "end_ns": { "type": "integer", "minimum": 0 }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "probeObject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "backend", "mode", "provider", "device", "versions", "anchor", "gemm", "copy"],
+      "description": "Bare device ceilings on the same device-selection logic inference uses. No model, no llama state — what the silicon can do, to divide what the model run achieved.",
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/shared/schema_version" },
+        "backend": { "$ref": "#/$defs/shared/backend" },
+        "mode": { "const": "probe" },
+        "provider": { "$ref": "#/$defs/shared/provider" },
+        "device": { "$ref": "#/$defs/shared/device" },
+        "versions": { "$ref": "#/$defs/versions" },
+        "anchor": { "$ref": "#/$defs/anchor" },
+        "gemm": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Matrix-multiply throughput points; FLOPs per repeat = 2·m·n·k.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["m", "n", "k", "dtype", "repeats"],
+            "properties": {
+              "m": { "type": "integer", "minimum": 1 },
+              "n": { "type": "integer", "minimum": 1 },
+              "k": { "type": "integer", "minimum": 1 },
+              "dtype": { "type": "string", "description": "ggml type name of the weight operand, e.g. f16, q4_K." },
+              "repeats": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/span" } }
+            }
+          }
+        },
+        "copy": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Buffer-copy bandwidth points. d2d approximates sustained device bandwidth; h2d/d2h the transfer link (equal to d2d on unified/CPU).",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "bytes", "repeats"],
+            "properties": {
+              "kind": { "enum": ["h2d", "d2h", "d2d"] },
+              "bytes": { "type": "integer", "minimum": 1 },
+              "repeats": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/span" } }
+            }
+          }
+        }
       }
     }
   }

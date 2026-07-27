@@ -5,9 +5,10 @@ what the analysis notebook reads by default. This command takes a local results
 dir (what `bench run --out` produced), copies its `<backend>-results.json` and
 the matching `<backend>-raw.json.gz` into the submission folder, validates every
 results file against the contract first (a malformed run never lands), and writes
-a `README.md` summarizing the run spec — machine, sampling, and a per-backend
-coverage table of `model × quant × provider` against tasks — so a reviewer sees
-what was measured without opening the JSON.
+a `README.md` summarizing the run spec — machine (incl. installed memory config),
+the per-provider ceiling probes, and a `model × quant × provider` coverage table
+of sweep/job status — so a reviewer sees what was measured without opening the
+JSON.
 
 It only moves and describes bytes the harness already produced; it never touches
 the contract or re-derives anything.
@@ -23,12 +24,24 @@ from pathlib import Path
 from .. import schema
 from .._log import log
 
-# Context ladder small→medium→large reads better than alphabetical; any task not
-# in this list is appended sorted. Mirrors the notebook's ordering.
-_TASK_ORDER = ["summarize-small", "summarize-medium", "summarize-large"]
+
+def _memory_line(mem: dict | None) -> str:
+    if not mem:
+        return "—"
+    parts = [f"{mem['total_gb']:g} GB"]
+    if mem.get("channels"):
+        parts.append(f"{mem['channels']}-channel")
+    if mem.get("configured_mts"):
+        speed = f"@ {mem['configured_mts']} MT/s"
+        if mem.get("rated_mts") and mem["rated_mts"] != mem["configured_mts"]:
+            speed += f" (rated {mem['rated_mts']})"
+        parts.append(speed)
+    if mem.get("rank"):
+        parts.append(f"rank {mem['rank']}")
+    return " ".join(parts)
 
 
-def _machine_line(m: dict) -> list[str]:
+def _machine_lines(m: dict) -> list[str]:
     """The machine spec as markdown table rows."""
     cores, threads = m.get("cpu_cores"), m.get("cpu_threads")
     cpu = m.get("cpu", "?")
@@ -40,64 +53,71 @@ def _machine_line(m: dict) -> list[str]:
         f"| OS | {m.get('os', '?')} |",
         f"| CPU | {cpu} |",
         f"| GPU | {gpus} |",
+        f"| Memory | {_memory_line(m.get('memory'))} |",
     ]
 
 
-def _coverage(doc: dict) -> tuple[list[str], list[list[str]]]:
-    """A `model × quant × provider` vs task status table for one backend doc.
+def _probe_rows(doc: dict) -> list[str]:
+    """One row per probed provider: the ceiling numbers a reviewer sanity-checks
+    against the spec sheet."""
+    rows = []
+    for p in doc.get("probes") or []:
+        if p["status"] != "ok":
+            rows.append(f"| {p['provider']} | {p['device']} | — | — | {p['status']} |")
+            continue
+        gemm = max((g["tflops_p50"] for g in p["gemm"]), default=None)
+        d2d = next((c["gbs_p50"] for c in p["copy"] if c["kind"] == "d2d"), None)
+        rows.append(
+            f"| {p['provider']} | {p['device']} "
+            f"| {gemm if gemm is not None else '—'} | {d2d if d2d is not None else '—'} | ok |"
+        )
+    return rows
 
-    Returns (task columns in ladder order, rows). Each row is
-    [model, quant, provider, status-per-task…]; an unhealthy run fills every task
-    cell with `unhealthy`.
-    """
-    tasks: set[str] = set()
-    for run in doc["runs"]:
-        tasks.update(t["task"] for t in run.get("tasks") or [])
-        tasks.update(run.get("timed_out_tasks") or [])
-        tasks.update(run.get("errored_tasks") or [])
-    cols = [t for t in _TASK_ORDER if t in tasks] + sorted(tasks - set(_TASK_ORDER))
 
+def _coverage(doc: dict) -> list[list[str]]:
+    """A `model × quant × provider` vs sweep/job status table for one backend doc."""
     rows = []
     for run in doc["runs"]:
-        status = {}
         if not run["healthy"]:
-            status = {t: "unhealthy" for t in cols}
+            sweep = job = "unhealthy"
         else:
-            status.update({t["task"]: "ok" for t in run.get("tasks") or []})
-            status.update({t: "too_slow" for t in run.get("timed_out_tasks") or []})
-            status.update({t: "errored" for t in run.get("errored_tasks") or []})
-        rows.append(
-            [run["model"], run["quant"], run["provider"], *(status.get(t, "—") for t in cols)]
-        )
+            sweep = run["sweep"]["status"]
+            job = run["job"]["status"]
+        pts = len(run["sweep"]["prefill"]) + len(run["sweep"]["decode"])
+        sweep_cell = f"{sweep} ({pts} pts)" if pts else sweep
+        rows.append([run["model"], run["quant"], run["provider"], sweep_cell, job])
     rows.sort()
-    return cols, rows
+    return rows
 
 
 def _render_readme(name: str, docs: list[tuple[Path, dict]]) -> str:
-    """The submission README: spec table + per-backend coverage."""
+    """The submission README: spec table + probes + per-backend coverage."""
     machine = docs[0][1]["machine"]
-    samplings = {(d["iters"], d["spawns"]) for _, d in docs}
 
     out = [f"# {name} — benchmark submission", ""]
-    out += ["| | |", "|---|---|", *_machine_line(machine)]
-    if len(samplings) == 1:
-        i, s = next(iter(samplings))
-        out.append(f"| Sampling | {i} iters × {s} spawns (timing n = {i * s} per cell) |")
+    out += ["| | |", "|---|---|", *_machine_lines(machine)]
+    spawns = {d["job_spawns"] for _, d in docs}
+    if len(spawns) == 1:
+        out.append(
+            f"| Sampling | job: {next(iter(spawns))} spawns; sweep/probe: adaptive per point |"
+        )
     out.append("")
     out.append(
-        "Status legend: `ok` (timed) · `too_slow` (timed out / below the floor) · "
-        "`errored` (crash/OOM, no sample) · `unhealthy` (brain-check failed)."
+        "Status legend: `ok` (measured) · `too_slow` (backstop killed / below the floor) · "
+        "`errored` (crash/OOM, no sample) · `skipped` · `unhealthy` (brain-check failed)."
     )
 
     for _path, doc in sorted(docs, key=lambda d: d[1]["backend"]):
-        cols, rows = _coverage(doc)
         out += ["", f"## {doc['backend']}  ({len(doc['runs'])} runs)", ""]
-        if len(samplings) > 1:
-            out.append(f"_{doc['iters']} iters × {doc['spawns']} spawns_\n")
-        header = ["model", "quant", "provider", *cols]
+        if doc.get("probes"):
+            out += ["| provider | device | gemm TFLOP/s | d2d GB/s | probe |",
+                    "|---|---|---|---|---|"]
+            out += _probe_rows(doc)
+            out.append("")
+        header = ["model", "quant", "provider", "sweep", "job"]
         out.append("| " + " | ".join(header) + " |")
         out.append("|" + "|".join(["---"] * len(header)) + "|")
-        for r in rows:
+        for r in _coverage(doc):
             out.append("| " + " | ".join(r) + " |")
 
     return "\n".join(out) + "\n"

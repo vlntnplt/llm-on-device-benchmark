@@ -1,6 +1,0 @@
-# The only file the harness reads to invoke this backend.
-# {dir} is substituted with this backend's absolute directory; the harness appends
-# the CLI subcommand + flags (see ../../README.md "Conventions").
-key  = "tjs"                          # must match the events object's `backend`
-name = "Transformers.js"              # human label for reports
-cmd  = ["node", "{dir}/dist/bench.js"]   # argv prefix

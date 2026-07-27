@@ -14,9 +14,8 @@ Metric definitions, all in milliseconds / tokens-per-second:
                   ttft).
   • completion  — prefill start → last decoded token, over the whole iteration.
 
-Tasks are single-turn; the math still pools token-weighted across
-turns, so a multi-turn iteration (several prefill/decode/turn-end triples) would
-aggregate correctly without changes.
+A multi-turn iteration (several prefill/decode/turn-end triples — e.g. the
+brain-check) pools token-weighted across its turns.
 """
 
 from __future__ import annotations

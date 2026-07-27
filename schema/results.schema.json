@@ -2,33 +2,38 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/llm-on-device-benchmark/schema/results.schema.json",
   "title": "Aggregated results object",
-  "description": "Written by the harness — one per backend. Each metric is summarized as [p50, max] over the appropriate sample pool.",
+  "description": "Written by the harness — one per backend. Per (model, quant, provider): the model geometry as the runtime reported it, aggregated sweep points, and the validation job's metrics. Per provider: device ceiling probes. Derived from the raw traces; `bench aggregate` re-derives it.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "backend", "machine", "iters", "spawns", "runs"],
+  "required": ["schema_version", "backend", "machine", "job_spawns", "probes", "runs"],
   "properties": {
-    "schema_version": { "const": "1" },
-    "backend": { "enum": ["ggml", "tjs"] },
+    "schema_version": { "const": "2" },
+    "backend": { "enum": ["ggml"] },
     "machine": {
       "type": "object",
-      "required": ["host", "os", "cpu", "cpu_cores", "cpu_threads", "gpus"],
+      "required": ["host", "os", "cpu", "cpu_cores", "cpu_threads", "gpus", "memory"],
       "properties": {
         "host": { "type": "string", "description": "Machine name — hostname, or `bench run --machine`. The analysis loader's label when results aren't under a per-machine subdir." },
         "os": { "enum": ["linux", "macos", "windows"] },
         "cpu": { "type": "string" },
         "cpu_cores": { "type": "integer", "minimum": 1, "description": "Physical cores." },
         "cpu_threads": { "type": "integer", "minimum": 1, "description": "Logical cores (SMT)." },
-        "gpus": { "type": "array", "items": { "type": "string" } }
+        "gpus": { "type": "array", "items": { "type": "string" } },
+        "memory": { "$ref": "#/$defs/memoryInfo" }
       }
     },
-    "iters": { "type": "integer", "minimum": 1, "description": "K: in-process timed iterations per spawn (default 5)." },
-    "spawns": { "type": "integer", "minimum": 1, "description": "S: process re-spawns per cell (default 3). Timing n = iters×spawns; load/mem n = spawns." },
+    "job_spawns": { "type": "integer", "minimum": 1, "description": "S: process re-spawns for the validation job (default 1). Sweep and probe points carry their own per-point n — repetition there is adaptive, in-process." },
+    "probes": {
+      "type": "array",
+      "description": "Device ceilings, one entry per provider that was probed.",
+      "items": { "$ref": "#/$defs/probeResult" }
+    },
     "runs": { "type": "array", "items": { "$ref": "#/$defs/run" } }
   },
   "$defs": {
     "stat": {
       "type": "array",
-      "description": "[p50, max] — median ranks the stacks, max flags instability.",
+      "description": "[p50, max] — median is the estimate, max flags instability.",
       "items": { "type": "number" },
       "minItems": 2,
       "maxItems": 2
@@ -36,49 +41,158 @@
     "nullableStat": {
       "oneOf": [
         { "$ref": "#/$defs/stat" },
-        { "type": "null", "description": "Not measurable for this backend/provider (e.g. *_vram on a CPU EP)." }
+        { "type": "null", "description": "Not measurable here (e.g. *_vram on a CPU EP)." }
       ]
+    },
+    "memoryInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total_gb", "channels", "configured_mts", "rated_mts", "rank", "dimms"],
+      "description": "Installed memory as configured — the source of nominal bandwidth (channels × width × configured MT/s), never the CPU's spec-sheet maximum. Fields beyond total_gb are null when the platform tool (dmidecode / system_profiler) was unavailable.",
+      "properties": {
+        "total_gb": { "type": "number", "minimum": 0 },
+        "channels": { "oneOf": [{ "type": "integer", "minimum": 1 }, { "type": "null" }], "description": "Populated memory channels." },
+        "configured_mts": { "oneOf": [{ "type": "integer", "minimum": 1 }, { "type": "null" }], "description": "MT/s the memory actually runs at." },
+        "rated_mts": { "oneOf": [{ "type": "integer", "minimum": 1 }, { "type": "null" }], "description": "MT/s the DIMMs are rated for (differs from configured when a profile is off)." },
+        "rank": { "oneOf": [{ "type": "integer", "minimum": 1 }, { "type": "null" }], "description": "Ranks per DIMM (min across DIMMs when mixed)." },
+        "dimms": {
+          "oneOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["size_gb", "configured_mts", "rated_mts", "rank"],
+                "properties": {
+                  "size_gb": { "type": "number", "minimum": 0 },
+                  "configured_mts": { "oneOf": [{ "type": "integer" }, { "type": "null" }] },
+                  "rated_mts": { "oneOf": [{ "type": "integer" }, { "type": "null" }] },
+                  "rank": { "oneOf": [{ "type": "integer" }, { "type": "null" }] }
+                }
+              }
+            },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "probeResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "device", "status", "gemm", "copy"],
+      "properties": {
+        "provider": { "type": "string" },
+        "device": { "type": "string" },
+        "status": { "enum": ["ok", "errored"] },
+        "gemm": {
+          "type": "array",
+          "description": "Per-point matmul throughput; the ceiling estimate is the best point.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["m", "n", "k", "dtype", "tflops_p50", "n_reps"],
+            "properties": {
+              "m": { "type": "integer" }, "n": { "type": "integer" }, "k": { "type": "integer" },
+              "dtype": { "type": "string" },
+              "tflops_p50": { "type": "number", "minimum": 0 },
+              "n_reps": { "type": "integer", "minimum": 1, "description": "Repeats behind the median." }
+            }
+          }
+        },
+        "copy": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "bytes", "gbs_p50", "n_reps"],
+            "properties": {
+              "kind": { "enum": ["h2d", "d2h", "d2d"] },
+              "bytes": { "type": "integer", "minimum": 1 },
+              "gbs_p50": { "type": "number", "minimum": 0 },
+              "n_reps": { "type": "integer", "minimum": 1 }
+            }
+          }
+        }
+      }
+    },
+    "geometry": {
+      "type": "object",
+      "description": "The events geometry block, carried verbatim from the sweep (or job) spawn — see events.schema.json $defs.geometry for field semantics.",
+      "required": ["n_layer", "n_embd", "n_head", "n_head_kv", "n_swa", "n_ctx_train", "n_params", "file_bytes", "context", "layers", "tensors", "buffers"]
     },
     "run": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["provider", "device", "model", "quant", "healthy", "vram_method", "tasks"],
+      "required": ["provider", "device", "model", "quant", "healthy", "vram_method", "geometry", "sweep", "job"],
       "properties": {
         "provider": { "type": "string" },
         "device": { "type": "string" },
         "model": { "type": "string" },
-        "quant": { "enum": ["fp16", "q8", "q4", "q4f16"] },
+        "quant": { "enum": ["fp16", "q8", "q4", "q2"] },
         "healthy": { "type": "boolean", "description": "Brain-check passed for this (model, provider)." },
-        "unhealthy_reason": { "type": "string", "description": "Present iff healthy=false: which brain-check failed and why; timed tasks were skipped." },
-        "timed_out_tasks": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "Timed tasks judged too slow to score: a single iteration outlived the harness backstop, or a smaller task ran below the usable tok/s floor (costlier tasks are then skipped). Absent from `tasks`; the report shows them as 'too slow'."
-        },
-        "errored_tasks": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "Timed tasks that were attempted but produced no sample for a reason other than slowness — a spawn that died emitting nothing (crash, OOM, device-lost). Distinct from `timed_out_tasks`: a failure, not slowness. Absent from `tasks`; the report shows them as 'errored'."
-        },
-        "vram_method": { "enum": ["nvml", "drm", "unified", "n/a"], "description": "How per-PID VRAM was obtained: NVML, DRM fdinfo's device-local pool (a discrete card's VRAM, or an APU's BIOS carve-out — reserved before boot, so not host RAM), unified memory, or unavailable." },
-        "tasks": { "type": "array", "items": { "$ref": "#/$defs/taskResult" } }
+        "unhealthy_reason": { "type": "string", "description": "Present iff healthy=false: which brain-check failed and why; sweep and job were skipped." },
+        "vram_method": { "enum": ["nvml", "drm", "unified", "n/a"], "description": "How per-PID VRAM was obtained: NVML, DRM fdinfo's device-local pool, unified memory, or unavailable." },
+        "geometry": { "oneOf": [{ "$ref": "#/$defs/geometry" }, { "type": "null", "description": "No spawn got far enough to report it." }] },
+        "sweep": { "$ref": "#/$defs/sweepResult" },
+        "job": { "$ref": "#/$defs/jobResult" }
       }
     },
-    "taskResult": {
+    "sweepResult": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["task", "metrics", "memory", "sample_completions"],
+      "required": ["status", "prefill", "decode"],
+      "description": "Aggregated sweep points. Points may be present with a non-ok status: whatever completed before the failure is kept (a partial sweep still informs the fit).",
       "properties": {
+        "status": { "enum": ["ok", "too_slow", "errored", "skipped"], "description": "skipped = gate failed, sweep never attempted. too_slow = the harness hang guard killed the spawn." },
+        "prefill": {
+          "type": "array",
+          "description": "Chunk timings of the single instrumented pass — the marginal cost curve (ms vs the context the chunk was ingested at); TTFT at depth d is the cumulative sum through d. A short series is a small measured envelope (slow silicon under the sweep budget), not missing data.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["context", "tokens", "ms"],
+            "properties": {
+              "context": { "type": "integer", "minimum": 0, "description": "KV depth before this chunk." },
+              "tokens": { "type": "integer", "minimum": 1, "description": "Chunk size (the deployment ubatch)." },
+              "ms": { "type": "number", "minimum": 0 }
+            }
+          }
+        },
+        "decode": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kv_fill", "tokens", "tps_p50", "tps_min", "tps_max", "n_reps"],
+            "properties": {
+              "kv_fill": { "type": "integer", "minimum": 0 },
+              "tokens": { "type": "integer", "minimum": 2 },
+              "tps_p50": { "type": "number", "minimum": 0 },
+              "tps_min": { "type": "number", "minimum": 0 },
+              "tps_max": { "type": "number", "minimum": 0 },
+              "n_reps": { "type": "integer", "minimum": 1 }
+            }
+          }
+        }
+      }
+    },
+    "jobResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "task"],
+      "description": "The validation job — a real end-to-end task whose measured cost checks what the sweeps predict. metrics/memory/sample_completions present iff status is ok.",
+      "properties": {
+        "status": { "enum": ["ok", "too_slow", "errored", "skipped"] },
         "task": { "type": "string" },
         "metrics": {
           "type": "object",
           "additionalProperties": false,
           "required": ["cold_start_ms", "model_load_ms", "context_init_ms", "warmup_ms", "ttft_ms", "decode_tps", "prefill_tps", "completion_ms"],
           "properties": {
-            "cold_start_ms": { "$ref": "#/$defs/nullableStat", "description": "First-touch load (cold page cache): model-load + context-init, attributed once to the first scored task, n=1." },
-            "model_load_ms": { "$ref": "#/$defs/stat", "description": "Warm load phase — read/mmap weights and upload to the device. Warm spawns pooled." },
-            "context_init_ms": { "$ref": "#/$defs/stat", "description": "Warm load phase — allocate the KV cache / compute graph / context after weights are resident." },
-            "warmup_ms": { "$ref": "#/$defs/stat", "description": "Warm load phase — one-time kernel/JIT warm pass before the timed iterations. Paid once per process, before any prompt." },
+            "cold_start_ms": { "$ref": "#/$defs/nullableStat", "description": "First-touch load (cold page cache): model-load + context-init, n=1." },
+            "model_load_ms": { "$ref": "#/$defs/stat", "description": "Warm load phase — read/mmap weights and place on device." },
+            "context_init_ms": { "$ref": "#/$defs/stat", "description": "Warm load phase — allocate KV cache / compute graph / context." },
+            "warmup_ms": { "$ref": "#/$defs/stat", "description": "One-time kernel/JIT warm pass, once per process." },
             "ttft_ms": { "$ref": "#/$defs/stat" },
             "decode_tps": { "$ref": "#/$defs/stat" },
             "prefill_tps": { "$ref": "#/$defs/nullableStat" },
@@ -87,21 +201,21 @@
         },
         "memory": {
           "type": "object",
-          "description": "Per-phase footprint over the timed iterations. Prefill is a ramp, so only its peak is meaningful. Decode is a plateau and gets two stats: *peak* (high-water — what the device must fit) and *sustained* (median over the decode samples — the steady per-token working set). They diverge when a transient rides into the decode window (e.g. a shape recompile spike still draining when decode starts).",
+          "description": "Per-phase footprint over the job iterations, sampled from outside. Decode gets peak (what must fit) and sustained (median — the steady working set); they diverge when a transient rides into the decode window.",
           "additionalProperties": false,
           "required": ["prefill_rss_peak_mb", "prefill_vram_peak_mb", "decode_rss_peak_mb", "decode_vram_peak_mb", "decode_rss_sustained_mb", "decode_vram_sustained_mb"],
           "properties": {
-            "prefill_rss_peak_mb": { "$ref": "#/$defs/nullableStat", "description": "Peak (high-water) RSS over the prefill spans of the timed iterations — the prompt-ingestion working set. Null if no sample landed in a prefill batch (a prefill shorter than the ~10 ms sample cadence)." },
-            "prefill_vram_peak_mb": { "$ref": "#/$defs/nullableStat", "description": "Peak VRAM over the prefill spans; null on a CPU EP / unified memory or when no prefill sample landed." },
-            "decode_rss_peak_mb": { "$ref": "#/$defs/nullableStat", "description": "Peak (high-water) RSS over the decode spans — what must fit in RAM. Null only if no sample landed in decode." },
-            "decode_vram_peak_mb": { "$ref": "#/$defs/nullableStat", "description": "Peak VRAM over the decode spans; null on a CPU EP / unified memory or when no decode sample landed." },
-            "decode_rss_sustained_mb": { "$ref": "#/$defs/nullableStat", "description": "Median RSS over the decode spans — the sustained generation working set (weights + KV + per-token activations), immune to transients draining out of prefill." },
-            "decode_vram_sustained_mb": { "$ref": "#/$defs/nullableStat", "description": "Median VRAM over the decode spans; null on a CPU EP / unified memory or when no decode sample landed." }
+            "prefill_rss_peak_mb": { "$ref": "#/$defs/nullableStat" },
+            "prefill_vram_peak_mb": { "$ref": "#/$defs/nullableStat" },
+            "decode_rss_peak_mb": { "$ref": "#/$defs/nullableStat" },
+            "decode_vram_peak_mb": { "$ref": "#/$defs/nullableStat" },
+            "decode_rss_sustained_mb": { "$ref": "#/$defs/nullableStat" },
+            "decode_vram_sustained_mb": { "$ref": "#/$defs/nullableStat" }
           }
         },
         "sample_completions": {
           "type": "array",
-          "description": "A few decoded completions (last turn) carried up from the events, so a human can eyeball that the stack produced real text, not garbage. Inspection aid only — not scored.",
+          "description": "A few decoded completions carried up from the events so a human can eyeball that the stack produced real text. Inspection aid only.",
           "items": { "type": "string" },
           "minItems": 1
         }
