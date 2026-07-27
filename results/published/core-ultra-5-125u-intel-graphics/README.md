@@ -6,7 +6,7 @@
 | OS | linux |
 | CPU | Intel(R) Core(TM) Ultra 5 125U (12C/14T) |
 | GPU | — |
-| Memory | 15.1 GB 1-channel @ 4800 MT/s rank 1 |
+| Memory | 15.1 GB 2-channel @ 4800 MT/s rank 1 |
 | Sampling | job: 1 spawns; sweep/probe: adaptive per point |
 
 Status legend: `ok` (measured) · `too_slow` (backstop killed / below the floor) · `errored` (crash/OOM, no sample) · `skipped` · `unhealthy` (brain-check failed).
