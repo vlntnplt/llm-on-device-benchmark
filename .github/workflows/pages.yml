@@ -27,7 +27,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Stage the report as the site root
-        run: mkdir -p _site && cp results/published/report.html _site/index.html
+        # A placeholder until the first submission regenerates the report.
+        run: |
+          mkdir -p _site
+          if [ -f results/published/report.html ]; then
+            cp results/published/report.html _site/index.html
+          else
+            echo '<h1>No submissions yet</h1>' > _site/index.html
+          fi
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site

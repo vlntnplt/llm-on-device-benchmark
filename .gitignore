@@ -7,8 +7,6 @@ models/
 
 # ─── Backend build outputs (sources tracked, artifacts not) ───
 backends/*/build/
-backends/transformersjs/node_modules/
-backends/transformersjs/dist/
 
 # ─── Runner (uv) ───
 harness/.venv/
