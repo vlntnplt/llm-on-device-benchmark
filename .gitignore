@@ -7,8 +7,9 @@ models/
 
 # ─── Backend build outputs (sources tracked, artifacts not) ───
 backends/*/build/
-backends/*/build-dist/   # per-target packaging builds (packaging/package.sh)
-dist/                    # staged contributor kits + archives
+# per-target packaging builds + staged contributor kits (packaging/package.sh)
+backends/*/build-dist/
+dist/
 
 # ─── Runner (uv) ───
 harness/.venv/
