@@ -32,7 +32,6 @@
 #include "ggml.h"
 #include "ggml-alloc.h"
 #include "ggml-backend.h"
-#include "ggml-cpu.h" // ggml_backend_cpu_set_n_threads for the probe
 #include "gguf.h"     // typed KV + tensor inventory for the geometry block
 
 #include "nlohmann/json.hpp"
@@ -1058,7 +1057,14 @@ int cmd_probe(const Arguments & args) {
         ggml_backend_t b;
         ~BackendFree() { ggml_backend_free(b); }
     } backend_free{backend};
-    if (device.is_cpu) ggml_backend_cpu_set_n_threads(backend, thread_count);
+    if (device.is_cpu) {
+        // Resolved at runtime: in a GGML_BACKEND_DL build the cpu backend is a
+        // dlopen'd module, so its symbols can't be linked directly.
+        auto * reg = ggml_backend_dev_backend_reg(device.handle);
+        auto   set_n_threads = reinterpret_cast<void (*)(ggml_backend_t, int)>(
+            ggml_backend_reg_get_proc_address(reg, "ggml_backend_set_n_threads"));
+        if (set_n_threads) set_n_threads(backend, thread_count);
+    }
     ggml_backend_buffer_type_t buffer_type = ggml_backend_dev_buffer_type(device.handle);
 
     json gemm = json::array();
