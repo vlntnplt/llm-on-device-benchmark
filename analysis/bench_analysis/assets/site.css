@@ -1,96 +1,195 @@
-/* One stylesheet, both themes: colours are custom properties switched on
-   prefers-color-scheme; charts render on transparent backgrounds and pick
-   their text colours from the vega theme site.js selects. */
+/* One stylesheet, both themes. Every colour is a custom property switched on
+   prefers-color-scheme; the same tokens drive the page chrome, the Models-tab
+   lane swatches (--s1…--s8 mirror charts.LANE_SLOTS), the fleet tier ramp,
+   and — via site.js reading them at mount time — the charts' axis/legend ink.
+   Palettes are validated against these exact surfaces (see charts.py). */
 
 :root {
-  --bg: #f6f8fa; --panel: #ffffff; --fg: #24292f; --muted: #57606a;
-  --border: #d6dade; --accent: #2a9d8f; --accent-fg: #14532d;
-  --active-bg: #eef2f6; --bad: #b5545d; --slow: #c9a227;
+  color-scheme: light;
+  --bg: #f6f8fa; --panel: #ffffff; --fg: #1f2429; --fg2: #454e57;
+  --muted: #5d6873; --border: #d9dfe5; --hair: #e7ebef;
+  --accent: #187a6e; --accent-fg: #14532d; --active-bg: #eef2f6;
+  --win: #006300;                                  /* success text: ok       */
+  --st-ok: #0ca30c; --st-slow: #b45309; --st-err: #ec835a; --st-unh: #d03b3b;
+
+  /* lane identity — the categorical slots, light steps */
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+  --s5: #e87ba4; --s6: #008300; --s7: #4a3aa7; --s8: #e34948; --sx: #898781;
+
+  /* fleet tiers — an ordinal blue ramp (best = most ink) + two statuses */
+  --t0-bg: #104281; --t0-ink: #ffffff;
+  --t1-bg: #2a78d6; --t1-ink: #ffffff;
+  --t2-bg: #6da7ec; --t2-ink: #0b1520;
+  --tslow-bg: #898781; --tslow-ink: #ffffff;
+  --tnofit-bg: #d03b3b; --tnofit-ink: #ffffff;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #11161b; --panel: #1a2129; --fg: #d7dde3; --muted: #8a939b;
-    --border: #2c353f; --accent-fg: #7fd1c4; --active-bg: #24303a;
+    color-scheme: dark;
+    --bg: #11161b; --panel: #1a2129; --fg: #d7dde3; --fg2: #cdd3d9;
+    --muted: #8a939b; --border: #2c353f; --hair: #232c35;
+    --accent: #3db6a8; --accent-fg: #7fd1c4; --active-bg: #24303a;
+    --win: #0ca30c;
+    --st-slow: #fab219;
+
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+    --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
+
+    --t0-bg: #6da7ec; --t0-ink: #0b1520;
+    --t1-bg: #2a78d6; --t1-ink: #ffffff;
+    --t2-bg: #184f95; --t2-ink: #e8eef4;
   }
 }
 
 * { box-sizing: border-box; }
 body {
-  margin: 0 auto; max-width: 66rem; padding: 1.5rem 1.25rem 4rem;
+  margin: 0 auto; max-width: 68rem; padding: 2rem 1.5rem 5rem;
   background: var(--bg); color: var(--fg);
-  font: 15px/1.55 system-ui, sans-serif;
+  font: 15px/1.6 system-ui, sans-serif;
 }
-h1 { font-size: 1.45rem; margin: 0.5rem 0 0.25rem; }
-h2 { font-size: 1.1rem; margin-top: 2.25rem; }
-h3 { font-size: 0.95rem; margin-top: 1.5rem; }
-p, li { max-width: 46rem; }
+h1 { font-size: 1.6rem; letter-spacing: -0.015em; margin: 0 0 0.4rem; }
+h2 { font-size: 1.15rem; letter-spacing: -0.01em; margin: 2.75rem 0 0.5rem; }
+h3 { font-size: 1rem; margin-top: 1.5rem; }
+p, li { max-width: 48rem; }
+p { margin: 0.6rem 0; }
 .muted { color: var(--muted); }
-a { color: var(--accent); }
-code { background: var(--active-bg); padding: 0.05rem 0.3rem; border-radius: 4px; }
-
-table { border-collapse: collapse; margin: 0.75rem 0; font-size: 0.9rem; }
-th, td {
-  padding: 0.3rem 0.65rem; border: 1px solid var(--border); text-align: right;
-  font-variant-numeric: tabular-nums;
+a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+code {
+  background: var(--active-bg); padding: 0.08rem 0.35rem; border-radius: 4px;
+  font-size: 0.88em;
 }
-th { color: var(--muted); font-weight: 600; }
-td:first-child, th:first-child { text-align: left; }
 
-/* ── Tabs (real ones) ─────────────────────────────────────────────────── */
+/* ── Masthead ─────────────────────────────────────────────────────────── */
+.lede { color: var(--fg2); }
+.stats { display: flex; flex-wrap: wrap; gap: 0.75rem 2.75rem; margin: 1.5rem 0 0.25rem; }
+.stat .v { display: block; font-size: 1.55rem; font-weight: 650; line-height: 1.2; }
+.stat .k {
+  color: var(--muted); font-size: 0.78rem; text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+footer {
+  margin-top: 4rem; padding-top: 1rem; border-top: 1px solid var(--hair);
+  color: var(--muted); font-size: 0.85rem;
+}
+
+/* ── Tabs ─────────────────────────────────────────────────────────────── */
 nav.tabs {
-  display: flex; gap: 0.4rem; margin: 1.25rem 0 0.5rem; flex-wrap: wrap;
-  border-bottom: 1px solid var(--border); padding-bottom: 0.6rem;
+  display: flex; gap: 1.75rem; margin: 1.75rem 0 1.5rem;
+  border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; background: var(--bg); z-index: 10;
 }
 nav.tabs button {
-  font: inherit; font-size: 0.9rem; cursor: pointer; color: var(--fg);
-  background: transparent; border: 1px solid var(--border);
-  border-radius: 0.4rem; padding: 0.3rem 0.85rem;
+  font: inherit; font-size: 0.95rem; font-weight: 600; cursor: pointer;
+  color: var(--muted); background: none; border: none;
+  padding: 0.6rem 0.1rem; margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
 }
-nav.tabs button:hover { border-color: var(--accent); }
+nav.tabs button:hover { color: var(--fg); }
 nav.tabs button[aria-selected="true"] {
-  background: var(--active-bg); border-color: var(--accent);
-  color: var(--accent-fg); font-weight: 600;
+  color: var(--fg); border-bottom-color: var(--accent);
+}
+nav.tabs button:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 4px;
 }
 section[role="tabpanel"][hidden] { display: none; }
 
+/* ── Tables ───────────────────────────────────────────────────────────── */
+table { border-collapse: collapse; margin: 0.9rem 0; font-size: 0.9rem; }
+th, td {
+  padding: 0.42rem 0.8rem; text-align: right;
+  border-bottom: 1px solid var(--hair);
+  font-variant-numeric: tabular-nums;
+}
+thead th {
+  color: var(--muted); font-weight: 600; font-size: 0.72rem;
+  text-transform: uppercase; letter-spacing: 0.045em;
+  border-bottom: 1px solid var(--border);
+}
+td:first-child, th:first-child { text-align: left; padding-left: 0; }
+tbody tr:last-child td { border-bottom-color: var(--border); }
+.yes { color: var(--win); font-weight: 600; }
+.no { color: var(--st-unh); font-weight: 600; }
+
+/* Range cells on the Models table: the rate, its unit, and a second line. */
+.unit { color: var(--muted); font-size: 0.8em; }
+.sub { display: block; color: var(--muted); font-size: 0.78rem; line-height: 1.35; }
+.caveatmark { color: var(--st-slow); cursor: help; }
+
 /* ── Model cards ──────────────────────────────────────────────────────── */
-.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(21rem, 1fr));
-         gap: 1rem; margin-top: 1rem; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(23rem, 1fr));
+         gap: 1.1rem; margin-top: 1.1rem; }
 .card {
   background: var(--panel); border: 1px solid var(--border);
-  border-radius: 0.6rem; padding: 1rem 1.1rem;
+  border-radius: 0.7rem; padding: 1.1rem 1.25rem;
 }
-.card h3 { margin: 0 0 0.2rem; font-size: 1rem; }
+.card h3 { margin: 0; font-size: 1.02rem; }
 .card .quant { color: var(--muted); font-weight: normal; }
-.card dl {
-  display: grid; grid-template-columns: max-content 1fr; gap: 0.15rem 0.9rem;
-  margin: 0.6rem 0; font-size: 0.9rem;
+.card .costs { color: var(--muted); font-size: 0.82rem; margin: 0.25rem 0 0.4rem; }
+.card table { width: 100%; font-size: 0.84rem; }
+.card td, .card th { padding: 0.4rem 0.5rem; }
+.card td:first-child, .card th:first-child { padding-left: 0; }
+.card td:last-child, .card th:last-child { padding-right: 0; }
+.card .caveat { color: var(--muted); font-size: 0.84rem; margin-bottom: 0; }
+.card .caveat::before { content: "⚠ "; color: var(--st-slow); }
+
+/* Lane swatch: the same colour this lane wears in every chart. */
+.dot {
+  display: inline-block; width: 0.6rem; height: 0.6rem; border-radius: 50%;
+  background: var(--c); margin-right: 0.45rem; vertical-align: -0.03rem;
 }
-.card dt { color: var(--muted); }
-.card dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
-.card table { width: 100%; font-size: 0.82rem; }
-.card .caveat { color: var(--slow); font-size: 0.85rem; }
 
 /* ── Fleet ────────────────────────────────────────────────────────────── */
 input {
-  width: 5.5rem; background: var(--bg); color: var(--fg);
-  border: 1px solid var(--border); border-radius: 4px;
-  padding: 0.15rem 0.35rem; font: inherit; text-align: right;
+  width: 5.5rem; background: var(--panel); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 5px;
+  padding: 0.22rem 0.45rem; font: inherit; text-align: right;
 }
 input.name { width: 7rem; text-align: left; }
+input:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+
 .bar {
-  display: flex; height: 1.35rem; border-radius: 4px; overflow: hidden;
-  min-width: 18rem; border: 1px solid var(--border); background: var(--bg);
+  display: flex; gap: 2px; height: 1.5rem; min-width: 20rem;
+  border-radius: 5px; overflow: hidden;
 }
+.bar .seg {
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.72rem; font-weight: 600; white-space: nowrap; overflow: hidden;
+}
+.seg.t0 { background: var(--t0-bg); color: var(--t0-ink); }
+.seg.t1 { background: var(--t1-bg); color: var(--t1-ink); }
+.seg.t2 { background: var(--t2-bg); color: var(--t2-ink); }
+.seg.tslow { background: var(--tslow-bg); color: var(--tslow-ink); }
+.seg.tnofit { background: var(--tnofit-bg); color: var(--tnofit-ink); }
+.mix { font-size: 0.84rem; }
+.mix strong { font-variant-numeric: tabular-nums; }
+
 .note {
   background: var(--panel); border: 1px solid var(--border);
-  border-radius: 6px; padding: 0.7rem 1rem; max-width: 46rem; font-size: 0.9rem;
+  border-radius: 7px; padding: 0.7rem 1rem; max-width: 48rem; font-size: 0.9rem;
 }
-.legend span { display: inline-block; margin-right: 1rem; font-size: 0.85rem; }
+.legend span { display: inline-block; margin-right: 1.1rem; font-size: 0.85rem; }
 .legend i {
-  display: inline-block; width: 0.8rem; height: 0.8rem; border-radius: 2px;
-  vertical-align: -0.05rem; margin-right: 0.3rem;
+  display: inline-block; width: 0.8rem; height: 0.8rem; border-radius: 3px;
+  vertical-align: -0.05rem; margin-right: 0.35rem;
 }
+.legend i.t0 { background: var(--t0-bg); }
+.legend i.t1 { background: var(--t1-bg); }
+.legend i.t2 { background: var(--t2-bg); }
+.legend i.tslow { background: var(--tslow-bg); }
+.legend i.tnofit { background: var(--tnofit-bg); }
+
+/* Per-model cohort detail: disclosure button + nested prediction table. */
+button.disclose {
+  font: inherit; background: none; border: none; color: var(--fg);
+  cursor: pointer; padding: 0; text-align: left;
+}
+button.disclose::before {
+  content: "▸"; display: inline-block; width: 1rem; color: var(--muted);
+  transition: transform 0.12s;
+}
+button.disclose[aria-expanded="true"]::before { transform: rotate(90deg); }
+tr.detail > td { padding: 0 0 0.75rem 1rem; }
+tr.detail table { margin: 0.25rem 0; font-size: 0.82rem; }
 
 /* Fleet: hardware columns hide behind the "edit hardware assumptions"
    toggle; the per-row preset summary shows in their place. */
@@ -99,15 +198,17 @@ input.name { width: 7rem; text-align: left; }
 #fleet-cohorts .preset { color: var(--muted); font-size: 0.82rem; }
 
 /* ── Charts & details ─────────────────────────────────────────────────── */
-.chart { margin: 0.75rem 0; }
-details { margin: 1rem 0; }
+.chart { margin: 1rem 0; overflow-x: auto; }
+details { margin: 1.25rem 0; }
 details summary { cursor: pointer; color: var(--muted); }
+details summary:hover { color: var(--fg); }
 blockquote {
   border-left: 3px solid var(--border); margin: 0.75rem 0; padding: 0.4rem 0.9rem;
   background: var(--panel); font-size: 0.85rem; white-space: pre-wrap;
 }
 blockquote .who { display: block; color: var(--muted); margin-bottom: 0.3rem; }
 select {
-  font: inherit; background: var(--bg); color: var(--fg);
-  border: 1px solid var(--border); border-radius: 4px; padding: 0.2rem 0.4rem;
+  font: inherit; background: var(--panel); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 5px; padding: 0.25rem 0.5rem;
 }
+select:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }

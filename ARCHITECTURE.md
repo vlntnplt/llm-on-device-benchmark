@@ -22,7 +22,7 @@ backends/          one independently-buildable exe per stack (ggml)
 harness/            backend-agnostic Python tool — enumerates cells, spawns
                    backends, samples memory, aggregates, publishes
 analysis/          separate Python project — loads results into pandas,
-                   compares across machines (marimo notebook)
+                   builds the static report site (Models / Fleet / Evidence)
 results/published/ version-controlled benchmark submissions
 ```
 

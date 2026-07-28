@@ -44,7 +44,9 @@ def _silicon(df: pd.DataFrame) -> dict[str, tuple[str, str]]:
     identifiable. Some machine blocks list no GPUs even though an iGPU ran —
     then the iGPU named in the CPU string ("… w/ Radeon 780M Graphics") stands
     in, else the accelerated providers' `device` strings (skipping wrappers like
-    "webgpu", which shorten to a provider name, not hardware)."""
+    "webgpu", which shorten to a provider name, not hardware). A name with no
+    model number ("Intel Graphics") identifies nothing and is discarded — the
+    lane borrows the CPU's name instead, which at least names the die."""
     out: dict[str, tuple[str, str]] = {}
     for m, sub in df.groupby("machine"):
         raw_cpu = sub.cpu.iloc[0]
@@ -57,6 +59,8 @@ def _silicon(df: pd.DataFrame) -> dict[str, tuple[str, str]]:
             devices = sub.loc[sub.provider != "cpu", "device"].dropna().unique()
             gpu = next((s for s in map(_shorten, devices)
                         if s and s != cpu and s.lower() not in eps), "")
+        if not re.search(r"\d", gpu):
+            gpu = ""
         out[m] = (cpu, gpu)
     return out
 

@@ -1,7 +1,13 @@
 /* The fleet calculator. Coefficients arrive in #fleet-data (JSON): per-model
    costs, per-class pooled (t0, eta), and the leave-one-out error that must be
    shown next to every prediction. The math mirrors bench_analysis.estimate:
-   time = t0 + work / (eta × ceiling). */
+   time = t0 + work / (eta × ceiling).
+
+   Tier colours are CSS classes (t0/t1/t2/tslow/tnofit), so the ordinal ramp
+   and its light/dark steps live in site.css with every other token. Every
+   coverage bar gets a text readout of its mix — the segments echo it, they
+   are never the only way to read the number — and each model row expands to
+   the per-cohort predictions behind its bar. */
 
 const DATA = JSON.parse(document.getElementById("fleet-data").textContent);
 
@@ -17,7 +23,9 @@ const COHORTS = [
   ["Apple · high", 0, 36, 540, 16],
 ];
 const TIERS = [["instant", 1, 20], ["usable", 3, 8], ["patient", 10, 3]];
-const COLORS = ["#2a9d8f", "#6aa84f", "#c9a227", "#8a939b", "#b5545d"];
+const TIER_CLASSES = ["t0", "t1", "t2", "tslow", "tnofit"];
+
+const open = new Set(); // model rows whose cohort detail stays expanded
 
 function el(tag, attrs, text) {
   const e = document.createElement(tag);
@@ -29,6 +37,8 @@ const val = (id) => parseFloat(document.getElementById(id).value) || 0;
 const cls = (kind) =>
   DATA.classes.find((c) => c.lane_class === "gpu" && c.kind === kind) ||
   { t0_ms: 0, eta: 1 };
+const fmtS = (s) => (s < 10 ? s.toFixed(1) : s.toFixed(0)) + " s";
+const fmtTps = (t) => (t < 10 ? t.toFixed(1) : t.toFixed(0));
 
 function buildInputs() {
   const tb = document.querySelector("#fleet-cohorts tbody");
@@ -68,13 +78,14 @@ function buildInputs() {
 function predict(m, mem, bw, tf, prompt, out) {
   const ctx = prompt + out;
   const kvGb = (m.kv_state_mb + (m.kv_mb_per_1k * ctx) / 1024) / 1024;
-  if (m.file_gb + kvGb + 1.0 > mem) return { fits: false };
+  const need = m.file_gb + kvGb + 1.0;
+  if (need > mem) return { fits: false, need };
   const d = cls("decode"), p = cls("prefill");
   const tps = 1 / (d.t0_ms / 1e3 + (m.body_gb + kvGb) / (d.eta * bw));
   const ttft =
     (Math.ceil(prompt / 512) * p.t0_ms) / 1e3 +
     (2 * m.body_gparams * prompt) / 1e3 / (p.eta * tf);
-  return { fits: true, tps, ttft };
+  return { fits: true, need, tps, ttft };
 }
 
 function render() {
@@ -94,7 +105,7 @@ function render() {
   legend.replaceChildren(
     ...labels.map((l, i) => {
       const s = el("span");
-      s.appendChild(el("i", { style: `background:${COLORS[i]}` }));
+      s.appendChild(el("i", { class: TIER_CLASSES[i] }));
       s.appendChild(document.createTextNode(l));
       return s;
     })
@@ -104,33 +115,88 @@ function render() {
   tb.replaceChildren();
   const total = COHORTS.reduce((s, _, i) => s + val(`c${i}-1`), 0);
   for (const m of DATA.models) {
+    const key = `${m.model} ${m.quant}`;
     const buckets = new Array(tiers.length + 2).fill(0);
-    COHORTS.forEach((_, i) => {
+    const perCohort = [];
+    COHORTS.forEach((c, i) => {
       const n = val(`c${i}-1`);
       if (!n) return;
       const r = predict(m, val(`c${i}-2`), val(`c${i}-3`), val(`c${i}-4`), prompt, out);
-      if (!r.fits) { buckets[tiers.length + 1] += n; return; }
-      const t = tiers.findIndex((t) => r.ttft <= t.ttft && r.tps >= t.tps);
-      buckets[t >= 0 ? t : tiers.length] += n;
+      let bucket = tiers.length + 1;
+      if (r.fits) {
+        const t = tiers.findIndex((t) => r.ttft <= t.ttft && r.tps >= t.tps);
+        bucket = t >= 0 ? t : tiers.length;
+      }
+      buckets[bucket] += n;
+      perCohort.push({ name: c[0], n, r, outcome: labels[bucket] });
     });
+
     const tr = el("tr");
-    tr.appendChild(el("td", {}, `${m.model} ${m.quant}`));
+    const nameTd = el("td");
+    const btn = el("button", {
+      class: "disclose",
+      "aria-expanded": open.has(key) ? "true" : "false",
+    }, key);
+    btn.addEventListener("click", () => {
+      open.has(key) ? open.delete(key) : open.add(key);
+      render();
+    });
+    nameTd.appendChild(btn);
+    tr.appendChild(nameTd);
+
     const bar = el("td");
     const b = el("div", { class: "bar" });
     buckets.forEach((n, i) => {
-      if (n > 0)
-        b.appendChild(
-          el("div", {
-            style: `width:${(100 * n) / total}%;background:${COLORS[i]}`,
-            title: `${labels[i]}: ${((100 * n) / total).toFixed(0)}%`,
-          })
-        );
+      if (n <= 0) return;
+      const pct = (100 * n) / total;
+      const seg = el("div", {
+        class: `seg ${TIER_CLASSES[i]}`,
+        style: `width:${pct}%`,
+        title: `${labels[i]}: ${pct.toFixed(0)}%`,
+      });
+      if (pct >= 12) seg.textContent = `${pct.toFixed(0)}%`;
+      b.appendChild(seg);
     });
     bar.appendChild(b);
     tr.appendChild(bar);
+
     const served = buckets.slice(0, tiers.length).reduce((a, x) => a + x, 0);
-    tr.appendChild(el("td", {}, total ? `${((100 * served) / total).toFixed(0)}% in tier` : "—"));
+    const mixTd = el("td", { class: "mix" });
+    if (total) {
+      mixTd.appendChild(el("strong", {}, `${((100 * served) / total).toFixed(0)}% served`));
+      const parts = buckets
+        .map((n, i) => (n > 0 ? `${((100 * n) / total).toFixed(0)}% ${labels[i]}` : null))
+        .filter(Boolean);
+      mixTd.appendChild(el("span", { class: "muted" }, ` — ${parts.join(" · ")}`));
+    } else {
+      mixTd.textContent = "—";
+    }
+    tr.appendChild(mixTd);
     tb.appendChild(tr);
+
+    if (open.has(key)) {
+      const dtr = el("tr", { class: "detail" });
+      const td = el("td", { colspan: "3" });
+      const t = el("table");
+      const head = el("tr");
+      for (const h of ["cohort", "count", "needs", "first token", "tok/s", "outcome"])
+        head.appendChild(el("th", {}, h));
+      t.appendChild(el("thead")).appendChild(head);
+      const body = t.appendChild(el("tbody"));
+      for (const pc of perCohort) {
+        const row = el("tr");
+        row.appendChild(el("td", {}, pc.name));
+        row.appendChild(el("td", {}, `${pc.n}`));
+        row.appendChild(el("td", {}, `${pc.r.need.toFixed(1)} GB`));
+        row.appendChild(el("td", {}, pc.r.fits ? fmtS(pc.r.ttft) : "—"));
+        row.appendChild(el("td", {}, pc.r.fits ? fmtTps(pc.r.tps) : "—"));
+        row.appendChild(el("td", {}, pc.outcome));
+        body.appendChild(row);
+      }
+      td.appendChild(t);
+      dtr.appendChild(td);
+      tb.appendChild(dtr);
+    }
   }
 
   const parts = DATA.loo.map(

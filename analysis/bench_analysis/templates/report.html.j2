@@ -3,23 +3,32 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>On-device LLM inference benchmark</title>
 <style>{{ css }}</style>
 <script>{{ vega_js }}</script>
 </head>
 <body>
 
-<h1>On-device LLM inference benchmark</h1>
-<p>What does it cost to run a small LLM on the machines people actually own?
-One inference stack — <a href="https://github.com/ggml-org/llama.cpp">llama.cpp</a>
-— measured the same way on every contributed machine, on its GPU and on its
-CPU. Every number on this page is computed from the published runs in
-<code>results/published/</code>; nothing is quoted from spec sheets.</p>
+<header class="masthead">
+  <h1>On-device LLM inference benchmark</h1>
+  <p class="lede">What does it cost to run a small LLM on the machines people
+  actually own? One inference stack —
+  <a href="https://github.com/ggml-org/llama.cpp">llama.cpp</a> — measured the
+  same way on every contributed machine, on its GPU and on its CPU. Every
+  number on this page is computed from the published runs in
+  <code>results/published/</code>; nothing is quoted from spec sheets.</p>
+  <div class="stats">
+  {% for s in stats %}
+    <div class="stat"><span class="v">{{ s.v }}</span><span class="k">{{ s.k }}</span></div>
+  {% endfor %}
+  </div>
+</header>
 
-<nav class="tabs" role="tablist">
-  <button role="tab" data-panel="tab-models">Models</button>
-  <button role="tab" data-panel="tab-fleet">Fleet</button>
-  <button role="tab" data-panel="tab-explore">Explore</button>
+<nav class="tabs" role="tablist" aria-label="report sections">
+  <button role="tab" data-panel="tab-models" aria-controls="tab-models">Models</button>
+  <button role="tab" data-panel="tab-fleet" aria-controls="tab-fleet">Fleet</button>
+  <button role="tab" data-panel="tab-evidence" aria-controls="tab-evidence">Evidence</button>
 </nav>
 
 <section id="tab-models" role="tabpanel">
@@ -30,14 +39,18 @@ CPU. Every number on this page is computed from the published runs in
 {% include "fleet.j2" %}
 </section>
 
-<section id="tab-explore" role="tabpanel" hidden>
-{% include "explore.j2" %}
+<section id="tab-evidence" role="tabpanel" hidden>
+{% include "evidence.j2" %}
 </section>
+
+<footer>Built {{ built }} from <code>results/published/</code>. Sections are
+linkable: <code>#models</code> · <code>#fleet</code> · <code>#evidence</code>.</footer>
 
 {% for id, spec in specs.items() %}
 <script type="application/json" id="{{ id }}">{{ spec }}</script>
 {% endfor %}
 <script type="application/json" id="fleet-data">{{ fleet_data }}</script>
+<script type="application/json" id="dark-map">{{ dark_map }}</script>
 <script>{{ site_js }}</script>
 <script>{{ fleet_js }}</script>
 </body>

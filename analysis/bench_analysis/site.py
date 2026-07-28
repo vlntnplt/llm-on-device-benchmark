@@ -6,6 +6,11 @@ the assets and vega libraries inlined. Charts are vega-lite specs embedded as
 JSON islands; `assets/site.js` mounts them and drives the tabs; the fleet
 calculator (`assets/fleet.js`) reads its coefficients from another island.
 
+Lane identity is assigned here: every lane (machine × provider) that appears
+anywhere on the page gets one slot from `charts.LANE_SLOTS`, and the same
+domain→range scale goes to every curve chart while the Models tab wears the
+matching CSS variable — one lane, one colour, everywhere.
+
     uv run --project analysis python -m bench_analysis.site   # writes the default
     uv run --project analysis python -m bench_analysis.site --out path.html
 
@@ -22,6 +27,7 @@ import html
 import json
 import math
 import urllib.request
+from datetime import date
 from pathlib import Path
 
 import altair as alt
@@ -83,9 +89,81 @@ def _lane_namer(df):
     return lane
 
 
-def _models_ctx(df, sweeps, memory) -> list[dict]:
+def _lane_slots(df, lane) -> dict[str, int]:
+    """Every lane on the page → its fixed colour slot. Sorted for a stable
+    assignment within a build; each rendered page is self-consistent."""
+    lanes = sorted({lane(m, p) for m, p in
+                    zip(df.submission, df.provider, strict=True)})
+    return {label: i for i, label in enumerate(lanes)}
+
+
+def _lane_scale(slots: dict[str, int]) -> alt.Scale:
+    return alt.Scale(domain=list(slots),
+                     range=[charts.lane_color(i) for i in slots.values()])
+
+
+def _css_slot(i: int) -> str:
+    """Slot index → the CSS custom-property class the templates use."""
+    return f"s{i + 1}" if i < len(charts.LANE_SLOTS) else "sx"
+
+
+def _fmt_s(ms: float | None) -> str:
+    return f"{ms / 1e3:.1f} s" if ms else "—"
+
+
+CLASS_ORDER = ("cpu", "igpu", "dgpu")
+CLASS_LABELS = {"cpu": "CPU", "igpu": "integrated GPU", "dgpu": "discrete GPU"}
+
+
+def _hw_classes(pairs, probes) -> dict[tuple[str, str], str]:
+    """(submission, provider) → hardware class: "cpu", "igpu" or "dgpu".
+
+    Classified from the bandwidth probes, not the device name: a discrete card
+    has its own memory, measurably faster than its host's (RTX 5080: 816 vs
+    35 GB/s d2d); an integrated GPU shares the host's and matches it. An
+    accelerated lane with no probe reads as integrated — the claim that
+    assumes the least extra hardware."""
+    d2d = {(r.machine, r.provider): r.gbs
+           for r in probes[(probes.kind == "d2d") & (probes.status == "ok")].itertuples()}
+    out = {}
+    for m, p in pairs:
+        gpu, host = d2d.get((m, p)), d2d.get((m, "cpu"))
+        out[(m, p)] = ("cpu" if p == "cpu" else
+                       "dgpu" if gpu and host and gpu > 2 * host else "igpu")
+    return out
+
+
+def _rng(vals: list[float], fmt: str) -> str:
+    """A min–max range, collapsed when the values agree at display precision."""
+    if not vals:
+        return "—"
+    lo, hi = format(min(vals), fmt), format(max(vals), fmt)
+    return lo if lo == hi else f"{lo}–{hi}"
+
+
+def _rejects(fits, lane) -> dict[tuple[str, str], str]:
+    """Lanes the ranges must not anchor on: decode fits the estimator refuses
+    to pool (see `estimate.lenders`), each with the measured reason. Decode is
+    the gate — a lane whose generation shows no bandwidth term never engaged
+    the silicon, and none of its numbers describe the hardware class."""
+    good = {(r.machine, r.provider)
+            for r in estimate.lenders(fits).itertuples() if r.kind == "decode"}
+    out = {}
+    for r in fits[fits.kind == "decode"].itertuples():
+        if (r.machine, r.provider) in good:
+            continue
+        if not math.isfinite(r.eta):
+            flat = f" at ≈{1e3 / r.t0_ms:.0f} tok/s" if r.t0_ms > 0 else ""
+            why = (f"generation is flat{flat} whatever the model — "
+                   f"all overhead, no bandwidth term")
+        else:
+            why = f"the affine fit does not describe it (R² {r.r2:.2f})"
+        out[(r.machine, r.provider)] = f"{lane(r.machine, r.provider)}: {why}"
+    return out
+
+
+def _models_ctx(df, sweeps, memory, lane, slots, classes, rejects) -> dict:
     costs = estimate.model_costs(df, memory)
-    lane = _lane_namer(df)
 
     def fits(r, gb):
         need = r.file_bytes / 2**30 + r.kv_state_mb / 1024 + r.kv_slope_mb * 4096 / 1024 + 1.0
@@ -102,31 +180,55 @@ def _models_ctx(df, sweeps, memory) -> list[dict]:
             curve = list(zip(pre.tokens, pre.ttft_ms, strict=True))
             t2k = _interp_log(curve, 2048) if len(pre) else None
             t8k = _interp_log(curve, 8192) if len(pre) else None
+            fresh = float(dec.loc[dec.kv_fill.idxmin()].tps_p50) if len(dec) else None
             deep = dec.loc[dec.kv_fill.idxmax()] if len(dec) else None
+            label = lane(m, p)
+            cls = classes.get((m, p), "igpu")
             anchors.append({
-                "lane": lane(m, p),
-                "t2k": f"{t2k / 1e3:.1f} s" if t2k else "—",
-                "t8k": f"{t8k / 1e3:.1f} s" if t8k else "—",
-                "fresh": f"{dec.loc[dec.kv_fill.idxmin()].tps_p50:.0f}" if len(dec) else "—",
+                "lane": label, "slot": _css_slot(slots.get(label, len(slots))),
+                "cls": CLASS_LABELS[cls], "cls_key": cls,
+                "rejected": (m, p) in rejects,
+                "t2k": _fmt_s(t2k), "t8k": _fmt_s(t8k), "t2k_v": t2k,
+                "fresh": f"{fresh:.0f}" if fresh is not None else "—",
+                "fresh_v": fresh,
                 "deep": f"{deep.tps_p50:.0f} @ {deep.kv_fill / 1024:.0f}k"
                         if deep is not None else "—",
             })
+        # Grouped by hardware class, alphabetical within — an ordering, not a
+        # ranking.
+        anchors.sort(key=lambda a: (CLASS_ORDER.index(a["cls_key"]), a["lane"]))
+        ranges = {}
+        for cls in CLASS_ORDER:
+            of = [a for a in anchors if a["cls_key"] == cls and not a["rejected"]]
+            fresh = [a["fresh_v"] for a in of if a["fresh_v"] is not None]
+            t2k = [a["t2k_v"] / 1e3 for a in of if a["t2k_v"] is not None]
+            ranges[cls] = {"fresh": _rng(fresh, ".0f"), "t2k": _rng(t2k, ".1f")}
         bad = df[(df.model == r.model) & (df.status != "ok")]
         caveats = "; ".join(
-            f"{b.lane}: job {b.status.replace('_', ' ')}" for b in bad.itertuples())
+            f"{lane(b.submission, b.provider)}: job {b.status.replace('_', ' ')}"
+            for b in bad.itertuples())
         out.append({
             "model": r.model, "quant": r.quant,
             "file_gb": r.file_bytes / 2**30, "body_gb": r.body_bytes / 2**30,
             "kv_mb_per_1k": r.kv_slope_mb * 1024, "kv_state_mb": r.kv_state_mb,
             "fits8": fits(r, 8), "fits16": fits(r, 16),
-            "anchors": anchors, "caveats": caveats,
+            "anchors": anchors, "ranges": ranges, "caveats": caveats,
         })
-    return out
+
+    # Class columns, described by the silicon whose measurements anchor them.
+    members: dict[str, set] = {c: set() for c in CLASS_ORDER}
+    for (m, p), cls in classes.items():
+        if (m, p) not in rejects:
+            members[cls].add(lane(m, p).rsplit(" · ", 1)[0])
+    cols = [{"key": c, "label": CLASS_LABELS[c], "members": ", ".join(sorted(members[c]))}
+            for c in CLASS_ORDER if members[c]]
+    return {"models": out, "class_cols": cols,
+            "rejects": sorted(rejects.values())}
 
 
-def _explore_ctx(df, ok, sweeps, memory, probes, task_order, specs: dict) -> dict:
+def _evidence_ctx(df, ok, sweeps, memory, probes, task_order, specs: dict,
+                  lane, lane_scale) -> dict:
     ctx: dict = {}
-    lane = _lane_namer(df)
     display = dict(zip(df.submission, df.machine, strict=False))
     ctx["machine_rows"] = [
         {"machine": r.machine, "cpu": r.cpu, "gpu": r.gpu,
@@ -168,7 +270,7 @@ def _explore_ctx(df, ok, sweeps, memory, probes, task_order, specs: dict) -> dic
             rows[rows.kind == "prefill"],
             "prompt reading: total time vs prompt length — ◆ = the validation job",
             x="tokens", y="ttft_ms", x_title="prompt tokens", y_title="ms",
-            overlay=over if len(over) else None))
+            hue_scale=lane_scale, overlay=over if len(over) else None))
         ids.append(sid)
         dec = rows[rows.kind == "decode"]
         if len(dec):
@@ -176,17 +278,25 @@ def _explore_ctx(df, ok, sweeps, memory, probes, task_order, specs: dict) -> dic
             sid = f"spec-curve-dec-{len(specs)}"
             specs[sid] = _spec(charts.curves(
                 dec.assign(kv_fill=lambda d: d.kv_fill.clip(lower=64)),
-                "generation: tokens/s vs context already used — ◆ = the validation job",
+                "generation: tokens/s vs context already used (log–log; "
+                "every lane keeps its shape) — ◆ = the validation job",
                 x="kv_fill", y="tps_p50", lo="tps_min", hi="tps_max",
                 x_title="context already used (tokens)", y_title="tok/s",
-                log_y=False, overlay=dover if len(dover) else None))
+                hue_scale=lane_scale, overlay=dover if len(dover) else None))
             ids.append(sid)
         memc = mem[mem.model == model] if len(mem) else mem
         if len(memc):
+            # The allocator ladder is machine-independent — every lane reports
+            # the same points, so six overplotted lines would be a fake
+            # six-series chart. Pool to one line, no legend.
+            pooled = (memc.groupby(["model", "n_ctx"], as_index=False)
+                      .kv_mb.median())
             sid = f"spec-curve-mem-{len(specs)}"
             specs[sid] = _spec(charts.curves(
-                memc, "memory reserved for context, by context size",
-                x="n_ctx", y="kv_mb", x_title="context (tokens)", y_title="MB"))
+                pooled, "memory reserved for context, by context size "
+                        "(allocator ladder — identical on every machine)",
+                x="n_ctx", y="kv_mb", x_title="context (tokens)", y_title="MB",
+                hue=None))
             ids.append(sid)
         ctx["curves"][model] = ids
 
@@ -195,6 +305,7 @@ def _explore_ctx(df, ok, sweeps, memory, probes, task_order, specs: dict) -> dic
     bad = counts[counts.status != "ok"]
     ok_n, all_n = int(counts[counts.status == "ok"].n.sum()), int(counts.n.sum())
     n_mach = df.machine.nunique()
+    ctx["jobs_ok"], ctx["jobs_all"] = ok_n, all_n
     verdict = (f"<strong>{ok_n}/{all_n} jobs scored</strong> across {n_mach} machine"
                + ("s" if n_mach != 1 else "") + ".")
     if len(bad):
@@ -295,14 +406,32 @@ def build(published: Path, out: Path, vega_cache: Path | None = None) -> None:
     memory = load_memory(published)
     ok = df[df.status == "ok"].copy()
 
+    lane = _lane_namer(df)
+    slots = _lane_slots(df, lane)
+    pairs = (set(zip(df.submission, df.provider, strict=True))
+             | set(zip(sweeps.machine, sweeps.provider, strict=True)))
+    classes = _hw_classes(pairs, probes)
+    fits = estimate.lane_fits(estimate.points(df, sweeps, memory, probes))
+    rejects = _rejects(fits, lane)
+
     specs: dict[str, str] = {}
     env = Environment(loader=PackageLoader("bench_analysis"),
                       autoescape=select_autoescape(default=False))
+    evidence = _evidence_ctx(df, ok, sweeps, memory, probes, task_order, specs,
+                             lane, _lane_scale(slots))
     context = {
-        "models": _models_ctx(df, sweeps, memory),
-        **_explore_ctx(df, ok, sweeps, memory, probes, task_order, specs),
+        **_models_ctx(df, sweeps, memory, lane, slots, classes, rejects),
+        **evidence,
         **_fleet_ctx(df, sweeps, memory, probes),
+        "stats": [
+            {"v": f"{df.machine.nunique()}", "k": "machines"},
+            {"v": f"{df.model.nunique()}", "k": "models"},
+            {"v": f"{len(slots)}", "k": "lanes measured"},
+            {"v": f"{evidence['jobs_ok']}/{evidence['jobs_all']}", "k": "jobs scored"},
+        ],
+        "built": date.today().strftime("%-d %B %Y"),
         "specs": specs,
+        "dark_map": json.dumps(charts.DARK_MAP),
         "css": (PKG / "assets" / "site.css").read_text(),
         "site_js": (PKG / "assets" / "site.js").read_text(),
         "fleet_js": (PKG / "assets" / "fleet.js").read_text(),

@@ -24,7 +24,7 @@ def _build(tmp_path):
 def test_build_renders_tabs_cards_and_strict_json(tmp_path):
     h = _build(tmp_path)
     assert "{{" not in h  # no unrendered template
-    for anchor in ("tab-models", "tab-fleet", "tab-explore", "fleet-cohorts",
+    for anchor in ("tab-models", "tab-fleet", "tab-evidence", "fleet-cohorts",
                    'class="card"'):
         assert anchor in h
     islands = re.findall(

@@ -1,53 +1,78 @@
-<p>Each model, reduced to the numbers that decide whether and how it runs.
-<strong>On disk</strong> is the download; <strong>streamed per token</strong> is
-the weight bytes a single decoded token reads — with the KV growth it sets
-generation speed on any machine (generation is memory-bound: tokens/s ≈
-effective bandwidth ÷ bytes per token). <strong>KV per 1k tokens</strong> is
-how the footprint grows with context; a "state" term is a recurrent
-architecture's constant. <strong>Fits 8 / 16 GB</strong> allows 4k context and
-~1 GB of runtime overhead.</p>
+<p>Each model reduced to a handful of numbers. <strong>On disk</strong> is the
+download; <strong>fits 8 / 16 GB</strong> allows 4k of context and ~1 GB of
+runtime overhead. The hardware columns are the measured range across this
+benchmark's machines of that class: generation speed on a fresh context, and
+under it the time to read a 2k-token prompt. A single number is a class with
+one measured machine so far, not a tighter estimate. A lane only anchors a
+range if the calibrated cost model can describe it — one whose fit fails
+that bar is a broken stack, not a slow machine, and is footnoted instead of
+averaged in.</p>
+<p class="muted">
+{%- for c in class_cols %}<strong>{{ c.label }}</strong>: {{ c.members }}{% if not loop.last %} &nbsp;·&nbsp; {% endif %}{% endfor -%}
+</p>
 
 <table>
-  <thead><tr><th>model</th><th>on disk</th><th>streamed per token</th>
-  <th>KV per 1k tokens</th><th>fits 8 / 16 GB</th></tr></thead>
+  <thead><tr><th>model</th><th>on disk</th><th>fits 8 GB</th><th>fits 16 GB</th>
+  {% for c in class_cols %}<th>{{ c.label }}</th>{% endfor %}</tr></thead>
   <tbody>
   {% for m in models %}
-    <tr><td><strong>{{ m.model }}</strong> {{ m.quant }}</td>
+    <tr><td><strong>{{ m.model }}</strong> <span class="muted">{{ m.quant }}</span>
+        {%- if m.caveats %} <span class="caveatmark" title="{{ m.caveats }}">†</span>{% endif %}</td>
         <td>{{ "%.1f"|format(m.file_gb) }} GB</td>
-        <td>{{ "%.1f"|format(m.body_gb) }} GB</td>
-        <td>{{ "%.0f"|format(m.kv_mb_per_1k) }} MB{% if m.kv_state_mb >= 1 %} + {{ "%.0f"|format(m.kv_state_mb) }} MB state{% endif %}</td>
-        <td>{{ "✓" if m.fits8 else "✗" }} / {{ "✓" if m.fits16 else "✗" }}</td></tr>
+        <td>{% if m.fits8 %}<span class="yes">✓</span>{% else %}<span class="no">✗</span>{% endif %}</td>
+        <td>{% if m.fits16 %}<span class="yes">✓</span>{% else %}<span class="no">✗</span>{% endif %}</td>
+        {% for c in class_cols %}{% set r = m.ranges[c.key] %}
+        <td><strong>{{ r.fresh }}</strong> <span class="unit">tok/s</span>
+            <span class="sub">2k prompt {{ r.t2k }}{% if r.t2k != "—" %} s{% endif %}</span></td>
+        {% endfor %}</tr>
   {% endfor %}
   </tbody>
 </table>
+{% if models | selectattr("caveats") | list %}
+<p class="muted">† {% for m in models if m.caveats %}{{ m.model }} — {{ m.caveats }}{% if not loop.last %}; {% endif %}{% endfor %}</p>
+{% endif %}
+{% if rejects %}
+<p class="muted">Excluded from the ranges: {% for r in rejects %}{{ r }}{% if not loop.last %}; {% endif %}{% endfor %}.
+Those measurements remain in the per-lane detail below and under
+<strong>Evidence</strong>.</p>
+{% endif %}
+<p class="muted">{{ verdict }}{{ agreement }} The measurements behind every
+number — machines, hardware ceilings, full cost curves — are under
+<strong>Evidence</strong>.</p>
 
-<p>Measured rates below are read off the sweep curves at reference points —
-how long to read a 2k / 8k prompt, and generation speed on an empty
-("fresh") vs filled ("deep") context. The full curves are under
-<strong>Explore</strong>; "—" means the sweep's budget ended before that
-depth on that lane.</p>
-
-<div class="cards">
-{% for m in models %}
-  <div class="card">
-    <h3>{{ m.model }} <span class="quant">{{ m.quant }}</span></h3>
-    <dl>
-      <dt>on disk</dt><dd>{{ "%.1f"|format(m.file_gb) }} GB</dd>
-      <dt>streamed / token</dt><dd>{{ "%.1f"|format(m.body_gb) }} GB</dd>
-      <dt>KV / 1k tokens</dt><dd>{{ "%.0f"|format(m.kv_mb_per_1k) }} MB</dd>
-      {% if m.kv_state_mb >= 1 %}<dt>recurrent state</dt><dd>{{ "%.0f"|format(m.kv_state_mb) }} MB</dd>{% endif %}
-    </dl>
-    <table>
-      <thead><tr><th>lane</th><th>2k prompt</th><th>8k prompt</th>
-      <th>fresh tok/s</th><th>deep tok/s</th></tr></thead>
-      <tbody>
-      {% for a in m.anchors %}
-        <tr><td>{{ a.lane }}</td><td>{{ a.t2k }}</td><td>{{ a.t8k }}</td>
-            <td>{{ a.fresh }}</td><td>{{ a.deep }}</td></tr>
-      {% endfor %}
-      </tbody>
-    </table>
-    {% if m.caveats %}<p class="caveat">{{ m.caveats }}</p>{% endif %}
+<details>
+  <summary>per-lane detail — the numbers behind the ranges, one row per
+  machine · provider</summary>
+  <p><strong>Streamed per token</strong> is the weight bytes a single decoded
+  token reads — with the KV growth it sets generation speed on any machine
+  (generation is memory-bound: tokens/s ≈ effective bandwidth ÷ bytes per
+  token). <strong>2k / 8k prompt</strong> are read off each lane's sweep curve;
+  <strong>fresh / deep</strong> is generation on an empty vs filled context.
+  "—" means the sweep's budget ended before that depth on that lane. Each lane
+  keeps its dot's colour in every chart under <strong>Evidence</strong>.</p>
+  <div class="cards">
+  {% for m in models %}
+    <div class="card">
+      <h3>{{ m.model }} <span class="quant">{{ m.quant }}</span></h3>
+      <p class="costs">{{ "%.1f"|format(m.file_gb) }} GB on disk ·
+        {{ "%.1f"|format(m.body_gb) }} GB streamed/token ·
+        {{ "%.0f"|format(m.kv_mb_per_1k) }} MB KV/1k tokens{% if m.kv_state_mb >= 1 %} + {{ "%.0f"|format(m.kv_state_mb) }} MB state{% endif %}</p>
+      <table>
+        <thead><tr><th>lane</th><th>class</th><th>2k prompt</th><th>8k prompt</th>
+        <th>fresh tok/s</th><th>deep tok/s</th></tr></thead>
+        <tbody>
+        {% for a in m.anchors %}
+          <tr><td><i class="dot" style="--c:var(--{{ a.slot }})"></i>{{ a.lane }}</td>
+              <td class="muted">{{ a.cls }}{% if a.rejected %} · not in ranges{% endif %}</td>
+              <td>{{ a.t2k }}</td>
+              <td>{{ a.t8k }}</td>
+              <td>{{ a.fresh }}</td>
+              <td>{{ a.deep }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% if m.caveats %}<p class="caveat">{{ m.caveats }}</p>{% endif %}
+    </div>
+  {% endfor %}
   </div>
-{% endfor %}
-</div>
+</details>

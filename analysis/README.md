@@ -16,8 +16,8 @@ uv run python -m bench_analysis.site   # → results/published/report.html
 
 The site builder (`bench_analysis/site.py`) renders `templates/*.j2` over
 context computed by the tested modules; charts are altair/vega-lite specs
-embedded as JSON and mounted by `assets/site.js`. The vega libraries are
-fetched once at build time (versions pinned to the installed altair) and
+embedded as JSON islands and mounted by `assets/site.js`. The vega libraries
+are fetched once at build time (versions pinned to the installed altair) and
 cached under `third_party/vega/` — nothing is fetched when the page is read.
 
 ## Results layout
@@ -49,42 +49,46 @@ results/
 Every loader pins the results `schema_version` — a file at another version is
 a loud error, not a silently-misaligned frame.
 
-## Layout: tested package, disposable notebook
+## Layout: tested package, thin templates
 
 - `bench_analysis/load.py` — results JSON → the tidy frame.
 - `bench_analysis/prep.py` — derived views, pure pandas: config labels,
   hardware-descriptive machine names, phase splits for the stacked charts,
   the predicted-vs-measured memory model, status tallies, GPU-vs-CPU
   pairings.
+- `bench_analysis/estimate.py` — the cost model: per-model work, per-lane
+  affine fits, and the leave-one-out transfer error shown next to every
+  prediction.
 - `bench_analysis/charts.py` — Altair builders sharing one visual language
-  (green = measured winner/ok, fixed hues per status and backend). Imported
-  only by the notebook, so the package's core import stays pandas-only.
-- `bench_analysis/switcher.py` — kernel-free tab switches, as
-  plain radios over pre-rendered panels. Takes rendered HTML rather than
-  importing marimo, so the core import stays pandas-only.
-- `report.py` — the marimo notebook: arranges prep's frames and charts'
-  builders, writes the prose. Every number in the text is computed from the
-  loaded frame, so it updates as submissions land. It presents measurements
-  and highlights measured winners — conclusions are the reader's.
-- `report.css` — the switcher styling the notebook injects into its export
-  (`App(css_file=…)`).
+  (documented in its module docstring): validated categorical slots for lane
+  identity, success-green reserved for `ok` outcomes, one status hue per
+  failure mode, recessive greys for setup phases.
+- `bench_analysis/site.py` — template context + rendering. Assigns each lane
+  its colour slot (the same colour in every chart and in the Models tab's
+  swatches), classifies lanes into hardware classes (CPU / integrated GPU /
+  discrete GPU, from the bandwidth probes) for the Models table's ranges,
+  computes the headline stats, and inlines everything.
+- `templates/*.j2` — the three tabs (Models / Fleet / Evidence) and the page
+  shell. Tabs are hash-linkable (`#models` / `#fleet` / `#evidence`).
+  Models is the at-a-glance table — per-class ranges, no charts; Evidence
+  holds the measurements behind it, every chart behind a `<details>`.
+- `assets/site.css` — every colour on the page as custom properties, light
+  and dark. `assets/site.js` mounts charts lazily, feeds them the page's own
+  ink tokens, and swaps series colours for their dark-surface steps (the
+  `#dark-map` island from `charts.DARK_MAP`) when the reader is dark.
+  `assets/fleet.js` is the fleet calculator; its tier ramp is CSS classes so
+  the colours live with every other token.
 
-`load.py`, `prep.py`, and `switcher.py` are the tested assets
-(`uv run pytest`); the notebook is disposable. Lint with `uv run ruff check`.
+`load.py`, `prep.py`, `estimate.py`, `charts.py`, and `site.py` are the
+tested assets (`uv run pytest`); templates and assets are exercised through
+`site.build` in `tests/test_site.py`. Lint with `uv run ruff check`.
 
-## Switching in a static export
+## Theming in a static export
 
-The HTML export has no kernel, so a `mo.ui` element cannot switch anything in
-it — clicking one raises *"Static notebook: this notebook is not connected to a
-kernel"*. Everything switchable is therefore pre-rendered and revealed by CSS:
-
-- tab groups (`switcher.tabs`) — one panel per pre-rendered view.
-
-The export also follows the reader's OS light/dark preference, from
-`[tool.marimo.display] theme = "system"` in `pyproject.toml`. That setting is
-what the export bakes in, and it has to be marimo's own: marimo picks the Vega
-theme from it, so charts only get light-on-dark axes if marimo itself knows it
-is dark. Page CSS cannot substitute — outputs render into a shadow root it
-cannot reach. Charts are built on a transparent background so the page shows
-through either way; mark and label colours are left exactly as computed, since
-they carry meaning.
+The page follows the reader's OS light/dark preference with no rebuild:
+chrome colours are CSS custom properties, and charts render on transparent
+backgrounds with their axis/legend ink read from those same properties at
+mount time. Series colours can't come from CSS (vega specs carry hex), so
+specs are built with the light palette and `site.js` rewrites each colour to
+its validated dark step when mounting on a dark page — both palettes are
+chosen for their surface rather than one compromise holding up on both.

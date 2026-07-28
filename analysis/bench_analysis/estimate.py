@@ -186,6 +186,14 @@ def lane_fits(pts: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def lenders(fits: pd.DataFrame) -> pd.DataFrame:
+    """The lanes whose parameters are trustworthy enough to leave the lane:
+    finite rate and a fit that actually describes the points (r2 ≥ LEND_R2).
+    Everything pooled — LOO, class parameters, the report's headline ranges —
+    draws from these; the rest borrow, never lend."""
+    return fits[np.isfinite(fits.eta) & (fits.r2 >= LEND_R2)]
+
+
 def loo(pts: pd.DataFrame) -> pd.DataFrame:
     """Leave-one-lane-out on the affine parameters: predict each lane's
     measured points with `t0` and `eta` pooled (median) from the *other*
@@ -195,14 +203,11 @@ def loo(pts: pd.DataFrame) -> pd.DataFrame:
     fits = lane_fits(pts)
     rows = []
     for (m, p, kind), g in pts.groupby(["machine", "provider", "kind"]):
-        others = fits[
-            (fits.kind == kind)
-            & (fits.lane_class == _lane_class(p))
-            & ~((fits.machine == m) & (fits.provider == p))
-            # An overhead-dominated lane (eta = inf) or one the affine model
-            # doesn't fit (low r2) may borrow parameters, never lend them.
-            & np.isfinite(fits.eta)
-            & (fits.r2 >= LEND_R2)
+        good = lenders(fits)
+        others = good[
+            (good.kind == kind)
+            & (good.lane_class == _lane_class(p))
+            & ~((good.machine == m) & (good.provider == p))
         ]
         if others.empty:
             continue
@@ -229,9 +234,8 @@ def class_params(fits: pd.DataFrame) -> pd.DataFrame:
     """Per (lane_class, kind): the pooled parameters a fleet prediction uses —
     median t0 and η over the lanes good enough to lend (finite rate, fit
     r2 ≥ LEND_R2) — with the lane count behind them."""
-    lenders = fits[np.isfinite(fits.eta) & (fits.r2 >= LEND_R2)]
     out = (
-        lenders.groupby(["lane_class", "kind"])
+        lenders(fits).groupby(["lane_class", "kind"])
         .agg(t0_ms=("t0_ms", "median"), eta=("eta", "median"), n_lanes=("eta", "size"))
         .reset_index()
     )
