@@ -75,7 +75,9 @@ cp "$EXE" "$EXE_DIR/"
 # Shared libs + dlopen'd backend modules, flat next to the exe: the exe's
 # $ORIGIN rpath (linux) / same-dir DLL lookup (windows) / static build (macos)
 # all resolve there, and ggml_backend_load_all searches the exe's directory.
-find "$BUILD" -type f \( -name 'libggml*.so*' -o -name 'libllama*.so*' \
+# -type l keeps the soname symlinks (libllama.so.0 → …) the loader asks for;
+# they link within the same dir, so they survive the flat copy.
+find "$BUILD" \( -type f -o -type l \) \( -name 'libggml*.so*' -o -name 'libllama*.so*' \
   -o -name 'ggml*.dll' -o -name 'llama*.dll' -o -name '*.dylib' \) \
   -exec cp -P {} "$EXE_DIR/" \;
 

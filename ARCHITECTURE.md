@@ -24,6 +24,8 @@ harness/            backend-agnostic Python tool — enumerates cells, spawns
 analysis/          separate Python project — loads results into pandas,
                    builds the static report site (Models / Fleet / Evidence)
 results/published/ version-controlled benchmark submissions
+packaging/         the contributor kit: per-platform zips (prebuilt exe +
+                   bundled uv + this tree) so a submission needs no toolchain
 ```
 
 Each component has a README with its specifics; this file is the map.
