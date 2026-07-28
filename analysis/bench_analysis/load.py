@@ -55,9 +55,12 @@ from pathlib import Path
 import pandas as pd
 
 # The results schema this loader understands; in lockstep with
-# results.schema.json's `schema_version`. A mismatch is a loud error, not a
-# silently-misaligned frame.
-SCHEMA_VERSION = "2"
+# results.schema.json's `schema_version`. An unknown version is a loud error,
+# not a silently-misaligned frame. v2 files (pre device-lane providers) still
+# load: their bare provider families map to lane index 0 — faithful for every
+# v2 result, since no multi-device box was measured before v3.
+SCHEMA_VERSION = "3"
+_LOADABLE_VERSIONS = ("2", "3")
 
 # Scalar fields copied straight off each run.
 _RUN_KEYS = ("provider", "device", "model", "quant", "healthy", "vram_method")
@@ -93,11 +96,16 @@ def _docs(root: str | Path):
     root = Path(root)
     for f in sorted(root.glob("**/*-results.json")):
         doc = json.loads(f.read_text())
-        if doc.get("schema_version") != SCHEMA_VERSION:
+        version = doc.get("schema_version")
+        if version not in _LOADABLE_VERSIONS:
             raise ValueError(
-                f"{f}: results schema_version={doc.get('schema_version')!r}, "
-                f"loader expects {SCHEMA_VERSION!r}"
+                f"{f}: results schema_version={version!r}, "
+                f"loader expects one of {_LOADABLE_VERSIONS!r}"
             )
+        if version == "2":
+            for entry in list(doc["runs"]) + list(doc.get("probes") or []):
+                if ":" not in entry["provider"]:
+                    entry["provider"] += ":0"
         machine = doc["machine"]
         memory = machine.get("memory") or {}
         base = {

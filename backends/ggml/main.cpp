@@ -4,11 +4,15 @@
 //
 //   bench-ggml version
 //   bench-ggml providers --model <path.gguf>
-//   bench-ggml run   --model <path.gguf> --quant <fp16|q8|q4|q2> --ep <provider>
+//   bench-ggml run   --model <path.gguf> --quant <fp16|q8|q4|q2> --ep <lane>
 //                    --task <task.json> --iters <K> --out <events.json|->
-//   bench-ggml sweep --model <path.gguf> --quant <fp16|q8|q4|q2> --ep <provider>
+//   bench-ggml sweep --model <path.gguf> --quant <fp16|q8|q4|q2> --ep <lane>
 //                    --out <events.json|->
-//   bench-ggml probe --ep <provider> --out <events.json|->
+//   bench-ggml probe --ep <lane> --out <events.json|->
+//
+// A provider is a device lane, "<family>:<index>" ("vulkan:0", "cpu:0") — one
+// per compute device, so a machine with an iGPU and a dGPU under the same
+// family measures both.
 //
 // `run` executes a chat task (brain-check or the validation job). `sweep`
 // measures the cost function in one instrumented pass: a full-context prefill
@@ -42,6 +46,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <regex>
 #include <stdexcept>
 #include <string>
@@ -136,8 +141,8 @@ std::string model_name_from_path(const fs::path & artifact_path) {
     return std::regex_replace(artifact_path.stem().string(), quant_suffix, "");
 }
 // ---------------------------------------------------------------- devices / providers
-// Provider family of a device: drop a trailing index, lowercase ("CUDA0"→"cuda", "CPU"→"cpu").
-std::string provider_of(ggml_backend_dev_t device) {
+// Family of a device: drop a trailing index, lowercase ("CUDA0"→"cuda", "CPU"→"cpu").
+std::string family_of(ggml_backend_dev_t device) {
     std::string name = ggml_backend_dev_name(device);
     while (!name.empty() && std::isdigit(static_cast<unsigned char>(name.back()))) name.pop_back();
     return to_lower(name);
@@ -154,14 +159,30 @@ std::vector<ggml_backend_dev_t> compute_devices() {
     }
     return devices;
 }
-std::vector<std::string> available_providers() {
-    std::vector<std::string> providers;
+
+// A provider is a device LANE — "<family>:<index>", the index being the device's
+// position within its family in ggml's registry order ("vulkan:0", "vulkan:1").
+// A machine with an iGPU and a dGPU under one family exposes two lanes; a bare
+// family name is ambiguous there, so lanes are the only accepted --ep values.
+struct Lane {
+    std::string        id;
+    ggml_backend_dev_t handle;
+};
+std::vector<Lane> device_lanes() {
+    std::vector<Lane>          lanes;
+    std::map<std::string, int> family_counts;
     for (ggml_backend_dev_t device : compute_devices()) {
-        std::string provider = provider_of(device);
-        if (std::find(providers.begin(), providers.end(), provider) == providers.end())
-            providers.push_back(std::move(provider));
+        const std::string family = family_of(device);
+        lanes.push_back({family + ":" + std::to_string(family_counts[family]++), device});
     }
-    return providers;
+    return lanes;
+}
+json available_providers() {
+    json out = json::array();
+    for (const Lane & lane : device_lanes())
+        out.push_back(
+            {{"id", lane.id}, {"description", ggml_backend_dev_description(lane.handle)}});
+    return out;
 }
 
 struct Device {
@@ -170,12 +191,17 @@ struct Device {
     std::string        description; // human label, e.g. "NVIDIA GeForce RTX 5080"
 };
 Device select_device(std::string_view provider) {
-    for (ggml_backend_dev_t device : compute_devices()) {
-        if (provider_of(device) == provider)
-            return {device, ggml_backend_dev_type(device) == GGML_BACKEND_DEVICE_TYPE_CPU,
-                    ggml_backend_dev_description(device)};
+    std::string available;
+    for (const Lane & lane : device_lanes()) {
+        if (lane.id == provider)
+            return {lane.handle,
+                    ggml_backend_dev_type(lane.handle) == GGML_BACKEND_DEVICE_TYPE_CPU,
+                    ggml_backend_dev_description(lane.handle)};
+        available += (available.empty() ? "" : ", ") + lane.id;
     }
-    throw BenchError("provider --ep " + std::string{provider} + " not available on this build");
+    throw BenchError("--ep " + std::string{provider} +
+                     " is not a device lane on this machine; lanes here: [" + available +
+                     "] (a lane is <family>:<index> as listed by `providers`)");
 }
 
 // ---------------------------------------------------------------- versions
@@ -700,8 +726,9 @@ struct Cli {
 
         version_cmd = app.add_subcommand("version", "Print exact library/build versions as JSON");
 
-        providers_cmd =
-            app.add_subcommand("providers", "List providers this artifact runs here (JSON array)");
+        providers_cmd = app.add_subcommand(
+            "providers",
+            "List device lanes this artifact runs here (JSON array of {id, description})");
         providers_cmd->add_option("--model", args.model, "Resolved .gguf artifact path")
             ->required();
 
@@ -709,7 +736,7 @@ struct Cli {
         run_cmd->add_option("--model", args.model, "Resolved .gguf artifact path")->required();
         run_cmd->add_option("--quant", args.quant, "Quant label echoed into events (fp16|q8|q4|q2)")
             ->required();
-        run_cmd->add_option("--ep", args.provider, "Single provider/EP to run")->required();
+        run_cmd->add_option("--ep", args.provider, "Device lane to run, as listed by `providers` (e.g. vulkan:0)")->required();
         run_cmd->add_option("--task", args.task, "Resolved task JSON path")->required();
         run_cmd->add_option("--iters", args.iters, "Timed iterations after one load+warmup")
             ->capture_default_str();
@@ -726,7 +753,7 @@ struct Cli {
         sweep_cmd->add_option("--model", args.model, "Resolved .gguf artifact path")->required();
         sweep_cmd->add_option("--quant", args.quant, "Quant label echoed into events (fp16|q8|q4|q2)")
             ->required();
-        sweep_cmd->add_option("--ep", args.provider, "Single provider/EP to run")->required();
+        sweep_cmd->add_option("--ep", args.provider, "Device lane to run, as listed by `providers` (e.g. vulkan:0)")->required();
         sweep_cmd
             ->add_option("--deadline-ms", args.deadline_ms,
                          "Soft budget: stop the chunk/fill ladders once elapsed ≥ this (0 = off); "
@@ -737,7 +764,10 @@ struct Cli {
 
         probe_cmd = app.add_subcommand(
             "probe", "Measure bare device ceilings (GEMM, buffer copies); no model");
-        probe_cmd->add_option("--ep", args.provider, "Single provider/EP to probe")->required();
+        probe_cmd
+            ->add_option("--ep", args.provider,
+                         "Device lane to probe, as listed by `providers` (e.g. vulkan:0)")
+            ->required();
         probe_cmd->add_option("--out", args.out, "Events output path, or '-' for stdout")
             ->capture_default_str();
     }
@@ -764,7 +794,7 @@ void write_json(const std::string & destination, const json & value) {
 
 json event_header(const char * mode, const Arguments & args, const Device & device,
                   const json & anchor) {
-    json header = {{"schema_version", "2"},
+    json header = {{"schema_version", "3"},
                    {"backend", "ggml"},
                    {"mode", mode},
                    {"provider", args.provider},

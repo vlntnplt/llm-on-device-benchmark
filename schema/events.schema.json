@@ -10,9 +10,9 @@
   ],
   "$defs": {
     "shared": {
-      "schema_version": { "const": "2", "description": "Events schema version." },
+      "schema_version": { "const": "3", "description": "Events schema version." },
       "backend": { "enum": ["ggml"] },
-      "provider": { "type": "string", "description": "The single EP this spawn used, e.g. cpu, cuda, metal, vulkan." },
+      "provider": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*:[0-9]+$", "description": "The device lane this spawn used: <family>:<index>, e.g. cpu:0, vulkan:1 — one lane per compute device, indexed within its family in registry order." },
       "device": { "type": "string", "description": "Human device label, e.g. 'AMD Ryzen 9 7950X' or 'NVIDIA RTX 5080'." },
       "quant": { "enum": ["fp16", "q8", "q4", "q2"] }
     },

@@ -37,7 +37,8 @@ def main() -> None:
 
     p_plan = sub.add_parser("plan", help="enumerate cells without running")
     common(p_plan)
-    p_plan.add_argument("--providers", nargs="*", help="restrict to these providers")
+    p_plan.add_argument("--providers", nargs="*",
+                        help="restrict to these device lanes (vulkan:0) or families (vulkan)")
     p_plan.add_argument("--model", nargs="*", help="restrict to these models.yaml keys")
     p_plan.set_defaults(func=cmd_plan)
 
@@ -66,7 +67,8 @@ def main() -> None:
         default=120000,
         help="hard kill if even one job iteration outlives this — job marked too-slow",
     )
-    p_run.add_argument("--providers", nargs="*", help="restrict to these providers")
+    p_run.add_argument("--providers", nargs="*",
+                       help="restrict to these device lanes (vulkan:0) or families (vulkan)")
     p_run.add_argument("--model", nargs="*", help="restrict to these models.yaml keys")
     p_run.add_argument(
         "--machine", help="machine name for results.machine.host (default: hostname)"

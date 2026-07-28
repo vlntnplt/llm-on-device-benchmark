@@ -36,11 +36,18 @@ def cmd_check(args: argparse.Namespace) -> None:
     if not variants:
         raise SystemExit(f"no {backend.key!r} variants under {args.models}")
     v = variants[0]
-    eps = registry.providers(backend, v.model_path)
-    log(f"✓ providers for {v.model}/{v.model_path.name}: {eps}")
+    lanes = registry.providers(backend, v.model_path)
+    log(f"✓ providers for {v.model}/{v.model_path.name}: "
+        + ", ".join(f"{lane.id} ({lane.description})" for lane in lanes))
+    # ggml drops software rasterizers from its registry; one showing up as a
+    # lane means GPU timings would really be CPU timings — fail loudly.
+    rasterizers = [lane.id for lane in lanes if "llvmpipe" in lane.description.lower()]
+    if rasterizers:
+        raise SystemExit(f"software rasterizer exposed as a device lane: {rasterizers}")
+    ep = lanes[0].id
 
     # spawn_* schema-check every events object before returning it.
-    pr = spawn_probe(backend.cmd, ep=eps[0], backstop_s=300)
+    pr = spawn_probe(backend.cmd, ep=ep, backstop_s=300)
     if pr.events is None:
         raise SystemExit(f"`probe` produced no valid events: {pr.error}")
     best = max(
@@ -48,9 +55,9 @@ def cmd_check(args: argparse.Namespace) -> None:
         * 1e9 / 1e12
         for g in pr.events["gemm"]
     )
-    log(f"✓ probe valid on {eps[0]} ({pr.events['device']}); best gemm {best:.1f} TFLOP/s")
+    log(f"✓ probe valid on {ep} ({pr.events['device']}); best gemm {best:.1f} TFLOP/s")
 
-    sw = spawn_sweep(backend.cmd, model_path=v.model_path, quant=v.quant, ep=eps[0],
+    sw = spawn_sweep(backend.cmd, model_path=v.model_path, quant=v.quant, ep=ep,
                      deadline_ms=1, backstop_s=1800)
     if sw.events is None:
         raise SystemExit(f"`sweep` produced no valid events: {sw.error}")
@@ -66,13 +73,13 @@ def cmd_check(args: argparse.Namespace) -> None:
 
     gate = [t for t in load_tasks(args.tasks) if t.role == "gate"]
     result = spawn_run(
-        backend.cmd, model_path=v.model_path, quant=v.quant, ep=eps[0], task=gate[0].spec, iters=1
+        backend.cmd, model_path=v.model_path, quant=v.quant, ep=ep, task=gate[0].spec, iters=1
     )
     if result.events is None:
         raise SystemExit(f"`run` produced no valid events: {result.error}")
     completion = metrics.completions(result.events)[0]
     log(
-        f"✓ events valid on {eps[0]} ({result.events['device']}); "
+        f"✓ events valid on {ep} ({result.events['device']}); "
         f"healthy={result.events['healthy']}"
     )
     log(f"  {gate[0].name} → {completion!r}")

@@ -10,7 +10,7 @@ import pytest
 from bench.commands.merge import merge_raw
 
 
-def _cell(model: str, quant: str = "q4", provider: str = "cpu", versions: dict | None = None):
+def _cell(model: str, quant: str = "q4", provider: str = "cpu:0", versions: dict | None = None):
     events = {"versions": versions or {"llama_cpp_commit": "abc123", "compiler": "GNU 16"}}
     return {
         "model": model,
@@ -27,7 +27,7 @@ def _cell(model: str, quant: str = "q4", provider: str = "cpu", versions: dict |
 
 def _raw(cells: list[dict], probes: list[dict] | None = None, **over):
     raw = {
-        "schema_version": "2",
+        "schema_version": "3",
         "backend": "ggml",
         "machine": {
             "host": "box",
@@ -50,28 +50,28 @@ def _raw(cells: list[dict], probes: list[dict] | None = None, **over):
 
 def test_new_cells_append_and_duplicates_replace():
     old = _cell("m1")
-    base = _raw([old, _cell("m1", provider="vulkan")])
+    base = _raw([old, _cell("m1", provider="vulkan:0")])
     replacement = _cell("m1")
     replacement["cold_ms"] = 42.0
     merged = merge_raw(base, _raw([replacement, _cell("m2")]))
     keys = [(c["model"], c["provider"]) for c in merged["cells"]]
-    assert keys == [("m1", "cpu"), ("m1", "vulkan"), ("m2", "cpu")]
+    assert keys == [("m1", "cpu:0"), ("m1", "vulkan:0"), ("m2", "cpu:0")]
     assert merged["cells"][0]["cold_ms"] == 42.0  # replaced, not kept
 
 
 def test_base_probes_win_new_providers_land():
-    base = _raw([_cell("m1")], probes=[{"provider": "cpu", "trace": {"events": None}}])
+    base = _raw([_cell("m1")], probes=[{"provider": "cpu:0", "trace": {"events": None}}])
     new = _raw(
         [_cell("m2")],
         probes=[
-            {"provider": "cpu", "trace": {"events": None, "tag": "fresh"}},
-            {"provider": "vulkan", "trace": {"events": None}},
+            {"provider": "cpu:0", "trace": {"events": None, "tag": "fresh"}},
+            {"provider": "vulkan:0", "trace": {"events": None}},
         ],
     )
     merged = merge_raw(base, new)
     by_ep = {p["provider"]: p for p in merged["probes"]}
-    assert by_ep["cpu"]["trace"] == {"events": None}  # base's kept
-    assert set(by_ep) == {"cpu", "vulkan"}
+    assert by_ep["cpu:0"]["trace"] == {"events": None}  # base's kept
+    assert set(by_ep) == {"cpu:0", "vulkan:0"}
 
 
 @pytest.mark.parametrize(

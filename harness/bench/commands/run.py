@@ -115,14 +115,12 @@ def cmd_run(args: argparse.Namespace) -> None:
         raise SystemExit(f"no {backend.key!r} variants under {args.models}")
     variants = registry.select(variants, args.model)
 
-    # Pre-resolve the (variant, provider) cells so progress can show [i/N]; this
+    # Pre-resolve the (variant, lane) cells so progress can show [i/N]; this
     # asks each artifact's `providers` exactly once.
     cells: list[tuple[registry.Variant, str]] = []
     for v in variants:
-        eps = registry.providers(backend, v.model_path)
-        if args.providers:
-            eps = [e for e in eps if e in args.providers]
-        cells += [(v, ep) for ep in eps]
+        lanes = registry.filter_lanes(registry.providers(backend, v.model_path), args.providers)
+        cells += [(v, lane.id) for lane in lanes]
     deadline_ms = args.max_ms or None  # soft per-job-spawn time-box
     backstop_s = args.backstop_ms / 1000  # hard kill floor for one runaway iteration
     sweep_deadline_ms = args.sweep_ms or None

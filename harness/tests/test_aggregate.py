@@ -51,10 +51,10 @@ def _geometry() -> dict:
 
 def _base(mode: str) -> dict:
     return {
-        "schema_version": "2",
+        "schema_version": "3",
         "backend": "ggml",
         "mode": mode,
-        "provider": "cuda",
+        "provider": "cuda:0",
         "device": "cuda:0",
         "versions": {"threads": 8},
         "anchor": {"wall_unix_ns": W0, "mono_ns": 0},
@@ -170,7 +170,7 @@ def _trace(events: dict | None = None) -> dict:
 
 def _raw(cells: list[dict], probes: list[dict] | None = None) -> dict:
     return {
-        "schema_version": "2",
+        "schema_version": "3",
         "backend": "ggml",
         "machine": {
             "host": "test-box",
@@ -190,7 +190,7 @@ def _raw(cells: list[dict], probes: list[dict] | None = None) -> dict:
         "job_spawns": 2,
         "job_iters": 5,
         "probes": probes if probes is not None else
-        [{"provider": "cuda", "trace": {"events": _probe_events(), "samples": []}}],
+        [{"provider": "cuda:0", "trace": {"events": _probe_events(), "samples": []}}],
         "cells": cells,
     }
 
@@ -199,7 +199,7 @@ def _healthy_cell() -> dict:
     return {
         "model": "demo",
         "quant": "q4",
-        "provider": "cuda",
+        "provider": "cuda:0",
         "healthy": True,
         "reason": None,
         "cold_ms": 123.0,
@@ -212,7 +212,7 @@ def _healthy_cell() -> dict:
 def test_build_is_schema_valid():
     results = aggregate.build(_raw([_healthy_cell()]))
     schema.validate_results(results)  # raises if not valid
-    assert results["schema_version"] == "2"
+    assert results["schema_version"] == "3"
     assert results["machine"]["memory"]["configured_mts"] == 4800
 
 
@@ -228,7 +228,7 @@ def test_probe_reduces_to_declared_throughputs():
 
 
 def test_failed_probe_is_errored_not_invented():
-    raw = _raw([_healthy_cell()], probes=[{"provider": "cuda",
+    raw = _raw([_healthy_cell()], probes=[{"provider": "cuda:0",
                                            "trace": {"events": None, "samples": []}}])
     probe = aggregate.build(raw)["probes"][0]
     assert probe["status"] == "errored" and probe["gemm"] == [] and probe["copy"] == []
@@ -301,7 +301,7 @@ def test_unhealthy_cell_skips_sweep_and_job():
     cell = {
         "model": "demo",
         "quant": "q4",
-        "provider": "cuda",
+        "provider": "cuda:0",
         "healthy": False,
         "reason": "brain-check decode mismatch",
         "cold_ms": None,

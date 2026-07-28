@@ -7,7 +7,7 @@
   "additionalProperties": false,
   "required": ["schema_version", "backend", "machine", "job_spawns", "probes", "runs"],
   "properties": {
-    "schema_version": { "const": "2" },
+    "schema_version": { "const": "3" },
     "backend": { "enum": ["ggml"] },
     "machine": {
       "type": "object",
@@ -25,7 +25,7 @@
     "job_spawns": { "type": "integer", "minimum": 1, "description": "S: process re-spawns for the validation job (default 1). Sweep and probe points carry their own per-point n — repetition there is adaptive, in-process." },
     "probes": {
       "type": "array",
-      "description": "Device ceilings, one entry per provider that was probed.",
+      "description": "Device ceilings, one entry per device lane that was probed.",
       "items": { "$ref": "#/$defs/probeResult" }
     },
     "runs": { "type": "array", "items": { "$ref": "#/$defs/run" } }
@@ -81,7 +81,7 @@
       "additionalProperties": false,
       "required": ["provider", "device", "status", "gemm", "copy"],
       "properties": {
-        "provider": { "type": "string" },
+        "provider": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*:[0-9]+$", "description": "Device lane: <family>:<index> (see events.schema.json)." },
         "device": { "type": "string" },
         "status": { "enum": ["ok", "errored"] },
         "gemm": {
@@ -125,7 +125,7 @@
       "additionalProperties": false,
       "required": ["provider", "device", "model", "quant", "healthy", "vram_method", "geometry", "sweep", "job"],
       "properties": {
-        "provider": { "type": "string" },
+        "provider": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*:[0-9]+$", "description": "Device lane: <family>:<index> (see events.schema.json)." },
         "device": { "type": "string" },
         "model": { "type": "string" },
         "quant": { "enum": ["fp16", "q8", "q4", "q2"] },

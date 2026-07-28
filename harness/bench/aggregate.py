@@ -116,7 +116,7 @@ def vram_method(traces: list[Trace], sources: dict, provider: str) -> str:
     answer is "not applicable"."""
     if sources["os"] == "macos":
         return "unified"
-    if provider == "cpu" or not _saw_vram(traces):
+    if provider.split(":")[0] == "cpu" or not _saw_vram(traces):
         return "n/a"
     if sources["nvml"]:
         return "nvml"
@@ -293,7 +293,7 @@ def build(raw: dict) -> dict:
     aggregation entrypoint shared by live `run` and `bench aggregate`."""
     sources = sampling_sources(raw)
     return {
-        "schema_version": "2",
+        "schema_version": "3",
         "backend": raw["backend"],
         "machine": raw["machine"],
         "job_spawns": raw["job_spawns"],

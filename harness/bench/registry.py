@@ -102,8 +102,16 @@ def select(variants: list[Variant], names: list[str] | None) -> list[Variant]:
     return [v for v in variants if v.model in names]
 
 
-def providers(backend: Backend, model_path: Path) -> list[str]:
-    """Providers this *artifact* runs on this machine — the exe decides."""
+@dataclass(frozen=True)
+class Lane:
+    id: str  # "<family>:<index>" — the wire `provider` value (--ep)
+    description: str  # human device label, e.g. "NVIDIA GeForce RTX 5080"
+
+
+def providers(backend: Backend, model_path: Path) -> list[Lane]:
+    """Device lanes this *artifact* runs on this machine — the exe decides.
+    One lane per compute device: a box with an iGPU and a dGPU under the same
+    family ("vulkan") exposes two lanes, and both are measured."""
     proc = subprocess.run(
         [*backend.cmd, "providers", "--model", str(model_path)],
         capture_output=True,
@@ -113,9 +121,34 @@ def providers(backend: Backend, model_path: Path) -> list[str]:
         raise SystemExit(
             f"`providers` exited {proc.returncode} for {model_path}:\n{proc.stderr.strip()}"
         )
-    eps = json.loads(proc.stdout)
-    if not isinstance(eps, list) or not eps:
+    lanes = json.loads(proc.stdout)
+    if not isinstance(lanes, list) or not lanes:
         raise SystemExit(
-            f"`providers` returned {eps!r} for {model_path}; expected a non-empty array"
+            f"`providers` returned {lanes!r} for {model_path}; expected a non-empty array"
         )
-    return eps
+    try:
+        return [Lane(id=entry["id"], description=entry["description"]) for entry in lanes]
+    except (TypeError, KeyError) as err:
+        raise SystemExit(
+            f"`providers` returned {lanes!r} for {model_path}; expected "
+            "[{id, description}, …] — is the exe older than events schema v3?"
+        ) from err
+
+
+def filter_lanes(lanes: list[Lane], filters: list[str] | None) -> list[Lane]:
+    """Restrict lanes to `--providers` values: an exact lane id ("vulkan:0") or
+    a bare family ("vulkan" → every vulkan lane). A filter matching nothing is
+    a loud error, not a silently smaller run."""
+    if not filters:
+        return lanes
+
+    def matches(lane: Lane, f: str) -> bool:
+        return lane.id == f or lane.id.startswith(f + ":")
+
+    unknown = [f for f in filters if not any(matches(lane, f) for lane in lanes)]
+    if unknown:
+        raise SystemExit(
+            f"--providers: {unknown} match no device lane here; "
+            f"lanes: {[lane.id for lane in lanes]}"
+        )
+    return [lane for lane in lanes if any(matches(lane, f) for f in filters)]

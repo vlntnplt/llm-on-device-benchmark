@@ -26,15 +26,15 @@ def cmd_plan(args: argparse.Namespace) -> None:
     log(f"backend {backend.key!r} → {' '.join(backend.cmd)}")
     log(f"gate: {gate}   job: {timed}")
     cells = 0
-    providers: set[str] = set()
+    lanes_seen: dict[str, str] = {}
     for v in variants:
-        eps = registry.providers(backend, v.model_path)
-        if args.providers:
-            eps = [e for e in eps if e in args.providers]
-        providers.update(eps)
-        print(f"{v.model:28} {v.quant:5}  providers={eps}")
-        cells += len(eps)
+        lanes = registry.filter_lanes(registry.providers(backend, v.model_path), args.providers)
+        lanes_seen.update({lane.id: lane.description for lane in lanes})
+        print(f"{v.model:28} {v.quant:5}  lanes={[lane.id for lane in lanes]}")
+        cells += len(lanes)
     print(
         f"\n{len(variants)} variants → {cells} cells (each: gate + sweep + job), "
-        f"plus one ceiling probe per provider ({sorted(providers)})"
+        f"plus one ceiling probe per device lane:"
     )
+    for lane_id, description in sorted(lanes_seen.items()):
+        print(f"  {lane_id:12} {description}")
