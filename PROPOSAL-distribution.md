@@ -119,7 +119,7 @@ slugging — never free text.
 
 ## C. Build & release
 
-### `backends/ggml/package.sh <target>`
+### `packaging/package.sh <target>`
 
 Assumes the toolchain is present (providing it is the workflow's job — the
 script never installs anything). Does: configure → build → stage → verify →
@@ -130,10 +130,10 @@ Configure flags per target:
 
 | target | flags |
 |---|---|
-| all | `GGML_BACKEND_DL=ON`, `GGML_CPU_ALL_VARIANTS=ON`, `Release` |
-| linux-x64 | `GGML_VULKAN=ON` |
-| windows-x64 | `GGML_VULKAN=ON`, `-G "Visual Studio 17 2022"` (cmake finds MSVC — no vcvars) |
-| macos-arm64 | Metal on by default, `GGML_METAL_EMBED_LIBRARY=ON`; ad-hoc codesign step as today |
+| all | `Release`, `GGML_NATIVE=OFF` |
+| linux-x64 | `GGML_BACKEND_DL=ON`, `GGML_CPU_ALL_VARIANTS=ON`, `GGML_VULKAN=ON`, shared libs + `$ORIGIN` rpath |
+| windows-x64 | same variant/Vulkan set, `-G "Visual Studio 17 2022"` (cmake finds MSVC — no vcvars) |
+| macos-arm64 | **static** Metal build with `GGML_METAL_EMBED_LIBRARY=ON` — one arm64 microarch, no variant machinery needed; ad-hoc codesign as today |
 
 **Module manifest check**: the staged `ggml-*` module set is compared
 against an expected per-target manifest and the build **fails on mismatch**.
@@ -266,9 +266,11 @@ clicks.
 
 ## Open questions
 
-- **Windows validation**: no owned Windows box — recruit one friendly tester
-  during phase 2, or accept first-contributor-finds-it risk on that platform?
-- **Multi-GPU submission naming**: "<CPU> (<GPU>)" slug with two GPUs —
-  probably "<CPU> (<GPU1>, <GPU2>)"; decide when the first such box shows up
-  in phase 2 (the 780M laptop + workstation cover iGPU-only and dGPU-only).
+- **Multi-GPU submission naming**: `bench bundle` slugs CPU + first GPU; a
+  two-GPU box probably wants both in the name. Decide when the first such box
+  submits (phase 2 covers the workstation, whose lanes now include the
+  Raphael iGPU — a first test case).
 - **Notarization**: revisit if mac contributor friction proves real.
+
+Resolved: Windows validation — the maintainer's Windows laptop plus friendly
+testers cover phase 2; the macOS work machine checks the mac artifact.

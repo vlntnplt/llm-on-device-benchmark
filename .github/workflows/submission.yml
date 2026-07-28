@@ -1,0 +1,98 @@
+# Turn an accepted submission issue into a reviewed pull request.
+#
+# Trigger: a maintainer labels a submission issue `accepted` — the label IS the
+# human gate; nothing runs on stranger input before that glance, and nothing
+# reaches main (→ Pages) without the PR review after it. The tarball is still
+# treated as untrusted input end-to-end: `bench ingest` checks structure before
+# extraction, schema-validates, and scans every string (they render into the
+# published report). Workflow code always comes from main (issues trigger), so
+# there is no fork-PR execution surface.
+name: submission
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: submission-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    if: github.event.label.name == 'accepted' && contains(github.event.issue.labels.*.name, 'submission')
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ISSUE: ${{ github.event.issue.number }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Find and download the attachment
+        env:
+          BODY: ${{ github.event.issue.body }}
+        run: |
+          url=$(grep -oE 'https://github\.com/user-attachments/files/[0-9]+/[A-Za-z0-9._-]+' <<<"$BODY" | head -1)
+          if [ -z "$url" ]; then
+            gh issue comment "$ISSUE" --body \
+              "❌ No attachment found in the issue body. Please edit the issue and drag the \`submission-<name>.tar.gz\` into the *Submission file* box."
+            exit 1
+          fi
+          # 26 MB cap mirrors GitHub's own attachment limit; a real bundle is ~300 KB.
+          curl -fsSL --max-filesize 26214400 -o submission.tar.gz "$url"
+
+      - name: Validate and land (bench ingest)
+        id: ingest
+        run: |
+          set +e
+          uv run --project harness bench ingest submission.tar.gz 2>&1 | tee ingest.log
+          code=${PIPESTATUS[0]}
+          if [ "$code" -ne 0 ]; then
+            {
+              echo "❌ The submission failed validation:"
+              echo '```'
+              tail -30 ingest.log
+              echo '```'
+              echo "Fix and re-attach (edit the issue), then re-apply the \`accepted\` label."
+            } >comment.md
+            gh issue comment "$ISSUE" --body-file comment.md
+            exit "$code"
+          fi
+          name=$(sed -n 's/^ingested \([a-z0-9-]*\) .*/\1/p' ingest.log | head -1)
+          desc=$(sed -n 's/^  machine: \(.*\)/\1/p' ingest.log | head -1)
+          echo "name=$name" >>"$GITHUB_OUTPUT"
+          echo "desc=$desc" >>"$GITHUB_OUTPUT"
+
+      - name: Rebuild the report
+        run: uv run --project analysis python -m bench_analysis.site
+
+      - name: Open the pull request
+        env:
+          NAME: ${{ steps.ingest.outputs.name }}
+          DESC: ${{ steps.ingest.outputs.desc }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          branch="submission/$NAME"
+          git checkout -b "$branch"
+          git add results/published
+          git commit -m "submission($NAME): $DESC" -m "Ingested from #$ISSUE by the submission workflow."
+          git push -f origin "$branch"
+          {
+            echo "Automated ingest of #$ISSUE — validation passed, report regenerated."
+            echo ""
+            echo '```'
+            cat ingest.log
+            echo '```'
+            echo ""
+            echo "Review the coverage README and sample completions, then merge to publish."
+            echo ""
+            echo "Closes #$ISSUE"
+          } >pr.md
+          pr_url=$(gh pr create --title "submission($NAME): $DESC" --body-file pr.md --base main --head "$branch")
+          gh issue comment "$ISSUE" --body "✅ Validation passed — your submission is now a pull request: $pr_url. It appears on the published report once merged. Thank you!"
