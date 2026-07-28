@@ -19,6 +19,7 @@ MODELS_DIR = REPO / "models"
 REGISTRY = REPO / "models.yaml"  # the model registry + fetch spec
 TASKS_DIR = REPO / "tasks"
 RESULTS_DIR = REPO / "results"
+PROJECT_URL = "https://github.com/vlntnplt/llm-on-device-benchmark"  # the submission tracker
 
 
 @dataclass(frozen=True)

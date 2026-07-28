@@ -10,6 +10,8 @@ Each subcommand's logic lives in its own module (`bench.commands.*`, plus
   check      conformance-check a built backend against the contract.
   fetch      download model artifacts from the Hub into models/, per models.yaml.
   publish    stage a local run as a shareable submission under results/published/.
+  bundle     pack a local run into one submission-<name>.tar.gz to attach to an issue.
+  ingest     validate a submission tarball (untrusted input) and land it in published/.
 """
 
 from __future__ import annotations
@@ -19,7 +21,9 @@ from pathlib import Path
 
 from . import config, fetch
 from .commands.aggregate import cmd_aggregate
+from .commands.bundle import cmd_bundle
 from .commands.check import cmd_check
+from .commands.ingest import cmd_ingest
 from .commands.merge import cmd_merge
 from .commands.plan import cmd_plan
 from .commands.publish import cmd_publish
@@ -117,6 +121,21 @@ def main() -> None:
     )
     p_pub.add_argument("--force", action="store_true", help="overwrite an existing submission")
     p_pub.set_defaults(func=cmd_publish)
+
+    p_bundle = sub.add_parser("bundle", help="pack a local run into a submission tarball")
+    p_bundle.add_argument("src", nargs="?", type=Path, default=config.RESULTS_DIR,
+                          help="local results dir holding <backend>-results.json")
+    p_bundle.add_argument("--name", help="submission name (default: derived from the machine)")
+    p_bundle.add_argument("--out", type=Path, default=Path("."),
+                          help="where to write submission-<name>.tar.gz")
+    p_bundle.set_defaults(func=cmd_bundle)
+
+    p_ing = sub.add_parser("ingest", help="validate a submission tarball and land it")
+    p_ing.add_argument("tarball", type=Path, help="a submission-<name>.tar.gz")
+    p_ing.add_argument("--published-dir", type=Path, default=config.RESULTS_DIR / "published",
+                       help="where submissions live (default: results/published)")
+    p_ing.add_argument("--force", action="store_true", help="overwrite an existing submission")
+    p_ing.set_defaults(func=cmd_ingest)
 
     args = ap.parse_args()
     args.func(args)
