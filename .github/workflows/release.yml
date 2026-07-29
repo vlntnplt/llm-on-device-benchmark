@@ -14,7 +14,9 @@ permissions:
   contents: write # attach assets to the release
 
 env:
-  VULKAN_SDK_VERSION: "1.4.309.0"
+  # 1.4.313+ on Windows ships the SPIRV-Headers/SPIRV-Tools CMake package
+  # configs ggml-vulkan find_package()s; older SDKs don't.
+  VULKAN_SDK_VERSION: "1.4.313.2"
 
 jobs:
   build:
@@ -55,6 +57,7 @@ jobs:
             "https://sdk.lunarg.com/sdk/download/$env:VULKAN_SDK_VERSION/windows/VulkanSDK-$env:VULKAN_SDK_VERSION-Installer.exe"
           & "$env:RUNNER_TEMP/vulkan-sdk.exe" --accept-licenses --default-answer --confirm-command install | Out-Null
           "VULKAN_SDK=C:\VulkanSDK\$env:VULKAN_SDK_VERSION" >> $env:GITHUB_ENV
+          "CMAKE_PREFIX_PATH=C:\VulkanSDK\$env:VULKAN_SDK_VERSION" >> $env:GITHUB_ENV
           "C:\VulkanSDK\$env:VULKAN_SDK_VERSION\Bin" >> $env:GITHUB_PATH
 
       - name: Package
