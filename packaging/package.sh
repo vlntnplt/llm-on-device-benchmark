@@ -24,7 +24,15 @@ JOBS="${JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)}"
 
 UV_VERSION="0.9.5" # bundled uv release; bump deliberately, the .sha256 asset verifies it
 
-BUILD="$REPO/backends/ggml/build-dist/$TARGET"
+# Windows builds in a SHORT root: llama.cpp's nested vulkan-shaders-gen
+# external project alone adds ~150 chars of path, and from a deep checkout
+# MSVC's PDB writer (C1041) and CMAKE_OBJECT_PATH_MAX blow the 260-char
+# limit — git core.longpaths doesn't cover either.
+if [ "$TARGET" = "windows-x64" ]; then
+  BUILD="${BENCH_BUILD_DIR:-C:/bb}"
+else
+  BUILD="$REPO/backends/ggml/build-dist/$TARGET"
+fi
 STAGE_NAME="bench-$TAG-$TARGET"
 DIST="$REPO/dist"
 STAGE="$DIST/$STAGE_NAME"
@@ -52,8 +60,10 @@ windows-x64)
   # Ninja + MSVC (cl from the environment — CI runs msvc-dev-cmd first):
   # linear readable logs and single-config output paths; MSBuild's interleaved
   # output has swallowed real errors here before.
-  FLAGS=("${COMMON_FLAGS[@]}" -G Ninja -DGGML_BACKEND_DL=ON
-    -DGGML_CPU_ALL_VARIANTS=ON -DGGML_VULKAN=ON -DBUILD_SHARED_LIBS=ON)
+  # Compiler pinned to cl: with Ninja, cmake takes the first compiler on
+  # PATH, and CI runners carry stray gcc toolchains that would win.
+  FLAGS=("${COMMON_FLAGS[@]}" -G Ninja -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl
+    -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON -DGGML_VULKAN=ON -DBUILD_SHARED_LIBS=ON)
   ;;
 macos-arm64)
   # Deployment target pinned: cmake otherwise defaults to the build host's OS,
