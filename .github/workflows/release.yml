@@ -54,7 +54,7 @@ jobs:
         shell: pwsh
         run: |
           curl.exe -fLo "$env:RUNNER_TEMP/vulkan-sdk.exe" `
-            "https://sdk.lunarg.com/sdk/download/$env:VULKAN_SDK_VERSION/windows/VulkanSDK-$env:VULKAN_SDK_VERSION-Installer.exe"
+            "https://sdk.lunarg.com/sdk/download/$env:VULKAN_SDK_VERSION/windows/vulkansdk-windows-X64-$env:VULKAN_SDK_VERSION.exe"
           & "$env:RUNNER_TEMP/vulkan-sdk.exe" --accept-licenses --default-answer --confirm-command install | Out-Null
           "VULKAN_SDK=C:\VulkanSDK\$env:VULKAN_SDK_VERSION" >> $env:GITHUB_ENV
           "CMAKE_PREFIX_PATH=C:\VulkanSDK\$env:VULKAN_SDK_VERSION" >> $env:GITHUB_ENV
