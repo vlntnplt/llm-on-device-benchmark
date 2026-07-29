@@ -69,6 +69,9 @@ jobs:
           echo "desc=$desc" >>"$GITHUB_OUTPUT"
 
       - name: Rebuild the report
+        # Frozen until the report redesign lands — submissions merge data-only
+        # and the served report stays as-is. Flip to true to resume.
+        if: ${{ false }}
         run: uv run --project analysis python -m bench_analysis.site
 
       - name: Open the pull request
