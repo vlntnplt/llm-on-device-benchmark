@@ -51,8 +51,10 @@ windows-x64)
     -DGGML_CPU_ALL_VARIANTS=ON -DGGML_VULKAN=ON -DBUILD_SHARED_LIBS=ON)
   ;;
 macos-arm64)
+  # Deployment target pinned: cmake otherwise defaults to the build host's OS,
+  # and a kit built on a macos-15 runner would refuse to launch on older Macs.
   FLAGS=("${COMMON_FLAGS[@]}" -DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON
-    -DBUILD_SHARED_LIBS=OFF)
+    -DBUILD_SHARED_LIBS=OFF -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0)
   ;;
 *) fail "unknown target $TARGET" ;;
 esac
