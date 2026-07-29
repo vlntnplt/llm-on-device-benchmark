@@ -132,7 +132,7 @@ Configure flags per target:
 |---|---|
 | all | `Release`, `GGML_NATIVE=OFF` |
 | linux-x64 | `GGML_BACKEND_DL=ON`, `GGML_CPU_ALL_VARIANTS=ON`, `GGML_VULKAN=ON`, shared libs + `$ORIGIN` rpath |
-| windows-x64 | same variant/Vulkan set, `-G "Visual Studio 17 2022"` (cmake finds MSVC — no vcvars) |
+| windows-x64 | same variant/Vulkan set; cmake's default generator picks the installed VS (no vcvars, no pinned version) |
 | macos-arm64 | **static** Metal build with `GGML_METAL_EMBED_LIBRARY=ON` — one arm64 microarch, no variant machinery needed; ad-hoc codesign as today |
 
 **Module manifest check**: the staged `ggml-*` module set is compared

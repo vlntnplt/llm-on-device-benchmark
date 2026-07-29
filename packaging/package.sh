@@ -47,7 +47,10 @@ linux-x64)
     -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON "-DCMAKE_INSTALL_RPATH=\$ORIGIN")
   ;;
 windows-x64)
-  FLAGS=("${COMMON_FLAGS[@]}" -G "Visual Studio 17 2022" -DGGML_BACKEND_DL=ON
+  # No -G: cmake's default generator on Windows picks the newest installed
+  # Visual Studio, whatever the runner image ships — a pinned version string
+  # goes stale (and did).
+  FLAGS=("${COMMON_FLAGS[@]}" -DGGML_BACKEND_DL=ON
     -DGGML_CPU_ALL_VARIANTS=ON -DGGML_VULKAN=ON -DBUILD_SHARED_LIBS=ON)
   ;;
 macos-arm64)
