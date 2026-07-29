@@ -7,9 +7,9 @@ body:
     attributes:
       value: |
         Thanks for running the benchmark! Attach the `submission-<name>.tar.gz`
-        that `run.sh` printed at the end. A maintainer reviews the issue; once
-        it's labeled `ingest`, an automated check validates the file and
-        turns it into a pull request (you'll get a comment either way).
+        that `run.sh` printed at the end. An automated check validates the file
+        and turns it into a pull request — you'll get a comment either way, and
+        your results appear on the site once a maintainer merges the PR.
   - type: textarea
     id: bundle
     attributes:

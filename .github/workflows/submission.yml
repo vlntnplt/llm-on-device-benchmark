@@ -1,12 +1,13 @@
-# Turn an approved submission issue into a reviewed pull request.
+# Turn a submission issue into a reviewed pull request.
 #
-# Trigger: a maintainer labels a submission issue `ingest` — the label IS the
-# human gate; nothing runs on stranger input before that glance, and nothing
-# reaches main (→ Pages) without the PR review after it. The tarball is still
-# treated as untrusted input end-to-end: `bench ingest` checks structure before
-# extraction, schema-validates, and scans every string (they render into the
-# published report). Workflow code always comes from main (issues trigger), so
-# there is no fork-PR execution surface.
+# Trigger: the `submission` label, which the issue form applies at creation —
+# the pipeline runs unattended and the PR review is the one human gate; nothing
+# reaches main (→ Pages) without it. The tarball is treated as untrusted input
+# end-to-end: `bench ingest` checks structure before extraction,
+# schema-validates, and scans every string (they render into the published
+# report). Workflow code always comes from main (issues trigger), so there is
+# no fork-PR execution surface. Worst-case abuse is spam PRs and CI minutes;
+# if that ever materialises, gate this condition on a maintainer-applied label.
 name: submission
 
 on:
@@ -24,7 +25,7 @@ concurrency:
 
 jobs:
   ingest:
-    if: github.event.label.name == 'ingest' && contains(github.event.issue.labels.*.name, 'submission')
+    if: github.event.label.name == 'submission'
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
@@ -58,7 +59,7 @@ jobs:
               echo '```'
               tail -30 ingest.log
               echo '```'
-              echo "Fix and re-attach (edit the issue), then re-apply the \`ingest\` label."
+              echo "Fix and re-attach (edit the issue), then remove and re-add the \`submission\` label to re-run."
             } >comment.md
             gh issue comment "$ISSUE" --body-file comment.md
             exit "$code"

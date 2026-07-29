@@ -179,12 +179,14 @@ drag `submission-<name>.tar.gz` into the form → done.
 plus only what the tarball can't know — power state (plugged/battery),
 anything unusual about the box.
 
-**Workflow** — triggers on `issues: labeled`, acts only on a
-maintainer-applied `ingest` label. The label gate is the design's spine:
-strangers can open issues, but nothing executes until a human glances at it.
-Maintainer workload per submission ≈ two clicks (label, merge).
+**Workflow** — triggers on `issues: labeled`, on the `submission` label the
+issue form applies at creation. The pipeline runs unattended; the PR review
+is the one human gate, and merging is acceptance. Maintainer workload per
+submission ≈ one click. Worst-case abuse of the unattended run is spam PRs
+and CI minutes (the validator is built for hostile input); if spam ever
+materialises, re-gate the workflow condition on a maintainer-applied label.
 
-On `ingest`:
+On `submission`:
 
 1. Fetch the attachment (public URL on a public repo — plain `curl`).
 2. **Hardened extraction** — the tarball is untrusted input: size cap,
