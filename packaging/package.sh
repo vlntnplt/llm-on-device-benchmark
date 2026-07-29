@@ -124,7 +124,9 @@ macos-arm64)
   ;;
 windows-x64)
   fetch_verified uv-x86_64-pc-windows-msvc.zip
-  (cd "$STAGE/bin" && unzip -oq "$DIST/uv-x86_64-pc-windows-msvc.zip" uv.exe)
+  # Expand-Archive, not unzip: Git Bash on Windows runners has no unzip.
+  powershell.exe -NoProfile -Command \
+    "Expand-Archive -Force -Path '$(cygpath -w "$DIST/uv-x86_64-pc-windows-msvc.zip")' -DestinationPath '$(cygpath -w "$STAGE/bin")'"
   ;;
 esac
 

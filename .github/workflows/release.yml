@@ -41,6 +41,12 @@ jobs:
             https://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list
           sudo apt-get update && sudo apt-get install -y vulkan-sdk
 
+      - name: Enable git long paths (windows)
+        # llama.cpp's UI tree nests past MAX_PATH; FetchContent's clone dies
+        # with "Filename too long" without this.
+        if: matrix.target == 'windows-x64'
+        run: git config --global core.longpaths true
+
       - name: Vulkan SDK (windows)
         if: matrix.target == 'windows-x64'
         shell: pwsh
