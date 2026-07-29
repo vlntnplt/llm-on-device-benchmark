@@ -39,7 +39,9 @@ sha256() { if command -v sha256sum >/dev/null; then sha256sum "$@"; else shasum 
 # runtime; GGML_NATIVE=OFF keeps the host's ISA out of the shared code. Vulkan
 # is the universal GPU lane on linux/windows; macOS is a static Metal build
 # (one arm64 microarch — no variant machinery needed) with embedded shaders.
-COMMON_FLAGS=(-DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF)
+# GGML_CCACHE off: release builds must be clean and deterministic; on CI
+# runners there is no persistent cache to win, only cl.exe flake to lose.
+COMMON_FLAGS=(-DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF -DGGML_CCACHE=OFF)
 case "$TARGET" in
 linux-x64)
   FLAGS=("${COMMON_FLAGS[@]}" -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON
@@ -47,10 +49,10 @@ linux-x64)
     -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON "-DCMAKE_INSTALL_RPATH=\$ORIGIN")
   ;;
 windows-x64)
-  # No -G: cmake's default generator on Windows picks the newest installed
-  # Visual Studio, whatever the runner image ships — a pinned version string
-  # goes stale (and did).
-  FLAGS=("${COMMON_FLAGS[@]}" -DGGML_BACKEND_DL=ON
+  # Ninja + MSVC (cl from the environment — CI runs msvc-dev-cmd first):
+  # linear readable logs and single-config output paths; MSBuild's interleaved
+  # output has swallowed real errors here before.
+  FLAGS=("${COMMON_FLAGS[@]}" -G Ninja -DGGML_BACKEND_DL=ON
     -DGGML_CPU_ALL_VARIANTS=ON -DGGML_VULKAN=ON -DBUILD_SHARED_LIBS=ON)
   ;;
 macos-arm64)

@@ -60,6 +60,11 @@ jobs:
           "CMAKE_PREFIX_PATH=C:\VulkanSDK\$env:VULKAN_SDK_VERSION" >> $env:GITHUB_ENV
           "C:\VulkanSDK\$env:VULKAN_SDK_VERSION\Bin" >> $env:GITHUB_PATH
 
+      - name: MSVC environment (windows)
+        # Puts cl/link on PATH for the Ninja generator.
+        if: matrix.target == 'windows-x64'
+        uses: ilammy/msvc-dev-cmd@v1
+
       - name: Package
         shell: bash
         run: packaging/package.sh ${{ matrix.target }} ${{ github.ref_name }}
