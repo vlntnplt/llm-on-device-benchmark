@@ -1,7 +1,7 @@
 """Work enumeration, driven by `models.yaml`.
 
 `models.yaml` is the single source of truth for *what to run*: per backend block
-(`gguf` for `ggml`, `onnx` for `tjs`) a `repo`, a `common` glob list, and a
+(`gguf` for `ggml`) a `repo`, a `common` glob list, and a
 `quants` map keyed by the contract quant enum → that quant's HF `files`. We emit
 one `Variant` per declared quant — the key *is* the wire value, no normalization.
 
@@ -23,16 +23,16 @@ from ._log import warn
 from .config import REGISTRY, Backend
 
 # backend key → the models.yaml block holding its artifact.
-BACKEND_BLOCK = {"ggml": "gguf", "tjs": "onnx"}
+BACKEND_BLOCK = {"ggml": "gguf"}
 # the contract `--quant` enum (events/results schema).
-QUANTS = {"fp16", "q8", "q4", "q4f16"}
+QUANTS = {"fp16", "q8", "q4", "q2"}
 
 
 @dataclass(frozen=True)
 class Variant:
     model: str  # the models.yaml key
-    model_path: Path  # resolved artifact (--model): the .gguf file or the onnx/ dir
-    quant: str  # contract enum (fp16|q8|q4|q4f16), verbatim from models.yaml
+    model_path: Path  # resolved artifact (--model): the .gguf file
+    quant: str  # contract enum (fp16|q8|q4|q2), verbatim from models.yaml
 
 
 def _matched(block_dir: Path, files: list[str]) -> list[Path]:
@@ -81,21 +81,37 @@ def variants(models_dir: Path, backend_key: str) -> list[Variant]:
                     f"{(qspec or {}).get('files')} under {block_dir} — skipping"
                 )
                 continue
-            if backend_key == "ggml":
-                ggufs = [p for p in hits if p.suffix == ".gguf"]
-                if len(ggufs) != 1:
-                    names = ", ".join(p.name for p in ggufs) or "(none)"
-                    warn(f"{model}.gguf {quant}: expected one .gguf, found {names} — skipping")
-                    continue
-                model_path = ggufs[0]
-            else:
-                model_path = block_dir  # the backend selects onnx/model_<dtype>.onnx via --quant
-            out.append(Variant(model=model, model_path=model_path, quant=quant))
+            ggufs = [p for p in hits if p.suffix == ".gguf"]
+            if len(ggufs) != 1:
+                names = ", ".join(p.name for p in ggufs) or "(none)"
+                warn(f"{model}.gguf {quant}: expected one .gguf, found {names} — skipping")
+                continue
+            out.append(Variant(model=model, model_path=ggufs[0], quant=quant))
     return out
 
 
-def providers(backend: Backend, model_path: Path) -> list[str]:
-    """Providers this *artifact* runs on this machine — the exe decides."""
+def select(variants: list[Variant], names: list[str] | None) -> list[Variant]:
+    """Restrict variants to the named models (`--model`); an unknown name is a
+    loud error, not an empty run."""
+    if not names:
+        return variants
+    known = {v.model for v in variants}
+    unknown = [n for n in names if n not in known]
+    if unknown:
+        raise SystemExit(f"--model: unknown model(s) {unknown}; fetched here: {sorted(known)}")
+    return [v for v in variants if v.model in names]
+
+
+@dataclass(frozen=True)
+class Lane:
+    id: str  # "<family>:<index>" — the wire `provider` value (--ep)
+    description: str  # human device label, e.g. "NVIDIA GeForce RTX 5080"
+
+
+def providers(backend: Backend, model_path: Path) -> list[Lane]:
+    """Device lanes this *artifact* runs on this machine — the exe decides.
+    One lane per compute device: a box with an iGPU and a dGPU under the same
+    family ("vulkan") exposes two lanes, and both are measured."""
     proc = subprocess.run(
         [*backend.cmd, "providers", "--model", str(model_path)],
         capture_output=True,
@@ -105,9 +121,34 @@ def providers(backend: Backend, model_path: Path) -> list[str]:
         raise SystemExit(
             f"`providers` exited {proc.returncode} for {model_path}:\n{proc.stderr.strip()}"
         )
-    eps = json.loads(proc.stdout)
-    if not isinstance(eps, list) or not eps:
+    lanes = json.loads(proc.stdout)
+    if not isinstance(lanes, list) or not lanes:
         raise SystemExit(
-            f"`providers` returned {eps!r} for {model_path}; expected a non-empty array"
+            f"`providers` returned {lanes!r} for {model_path}; expected a non-empty array"
         )
-    return eps
+    try:
+        return [Lane(id=entry["id"], description=entry["description"]) for entry in lanes]
+    except (TypeError, KeyError) as err:
+        raise SystemExit(
+            f"`providers` returned {lanes!r} for {model_path}; expected "
+            "[{id, description}, …] — is the exe older than events schema v3?"
+        ) from err
+
+
+def filter_lanes(lanes: list[Lane], filters: list[str] | None) -> list[Lane]:
+    """Restrict lanes to `--providers` values: an exact lane id ("vulkan:0") or
+    a bare family ("vulkan" → every vulkan lane). A filter matching nothing is
+    a loud error, not a silently smaller run."""
+    if not filters:
+        return lanes
+
+    def matches(lane: Lane, f: str) -> bool:
+        return lane.id == f or lane.id.startswith(f + ":")
+
+    unknown = [f for f in filters if not any(matches(lane, f) for lane in lanes)]
+    if unknown:
+        raise SystemExit(
+            f"--providers: {unknown} match no device lane here; "
+            f"lanes: {[lane.id for lane in lanes]}"
+        )
+    return [lane for lane in lanes if any(matches(lane, f) for f in filters)]

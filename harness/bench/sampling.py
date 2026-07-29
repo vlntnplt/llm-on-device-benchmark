@@ -243,14 +243,12 @@ class Sampler:
     def _tree_stats(self) -> tuple[int, set[int]]:
         """Summed RSS over the live process tree, plus the live pid set.
 
-        RSS (memory_info) on every platform — it's the whole resident footprint,
-        including the page-cache-backed pages that ggml's mmap'd weights live in.
-        We deliberately don't track USS: it *excludes* those mmap'd weights, so it
-        undercounts the very footprint we care about on the mmap backend, while on
-        tjs (private weights) it just equals RSS. memory_info is also cheaper than
-        memory_full_info — no /proc/smaps walk. (On an APU the weights live in the
-        GPU aperture, outside RSS; `_run` adds that back — see
-        `_drm_system_bytes`.)"""
+        RSS (memory_info) on every platform — the whole resident footprint.
+        The backends run mmap off, so weights are plain allocations and RSS
+        carries them in full. memory_info is also cheaper than
+        memory_full_info — no /proc/smaps walk. (On an APU the weights live in
+        the GPU aperture, outside RSS; `_run` adds that back — see
+        `_drm_bytes`.)"""
         try:
             tree = [self._root, *self._root.children(recursive=True)]
         except (psutil.NoSuchProcess, ProcessLookupError):

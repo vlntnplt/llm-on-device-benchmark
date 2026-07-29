@@ -1,32 +1,49 @@
-"""Load on-device benchmark results into one tidy DataFrame for cross-machine
+"""Load on-device benchmark results into tidy DataFrames for cross-machine
 comparison.
 
 Each `bench run` writes one `<backend>-results.json` (validated against
 `results.schema.json`). Run the benchmark on N machines and you get N×
-sets of those files. `load_results` fans over a directory tree, flattens every
-file, and concatenates — machine identity rides *inside* each file (the `machine`
+sets of those files. The loaders fan over a directory tree, flatten every
+file, and concatenate — machine identity rides *inside* each file (the `machine`
 block), so merging is just "add machine columns and stack rows".
 
 Recommended layout — one subdir per machine so filenames don't collide:
 
     results/
-      3090-box/   ggml-results.json  tjs-results.json
-      m1-max/     ggml-results.json  tjs-results.json
+      3090-box/   ggml-results.json
+      m1-max/     ggml-results.json
 
 Flat files directly under the root also load; their machine label is then derived
 from the in-file `machine` block instead of the directory name.
 
-The frame is long/tidy: one row per (machine, backend, model, quant, provider,
-device, task). Every `[p50, max]` stat is exploded into `<name>_p50` / `<name>_max`
-columns (a null stat — e.g. VRAM on a CPU EP — explodes to NaN/NaN, never 0).
-Cells that produced no timing still get a row, flagged by `status`:
+Three frames, one per kind of measurement:
 
-    ok         a timed task with metrics
-    too_slow   too slow to score: backstop timeout or below the floor (`timed_out_tasks`)
-    errored    attempted but produced no sample — crash/OOM, not slowness (`errored_tasks`)
-    unhealthy  the (model, provider) failed its brain-check; no tasks were run
+- `load_results` — the validation job: one row per (machine, backend, model,
+  quant, provider). Every `[p50, max]` stat explodes into `<name>_p50` /
+  `<name>_max` (a null stat — e.g. VRAM on a CPU EP — explodes to NaN/NaN,
+  never 0). Geometry scalars ride along (`geo_*`). Cells that produced no
+  timing still get a row, flagged by `status`:
 
-so a missing number is *visible*, not silently absent.
+      ok         a scored job with metrics
+      too_slow   backstop killed, or below the usable tok/s floor
+      errored    attempted but produced no sample — crash/OOM, not slowness
+      unhealthy  the (model, provider) failed its brain-check; nothing ran
+
+- `load_memory` — the memory cost curve: one row per allocator context point
+  from the sweep's `geometry.memory_points`, with `n_ctx` and the pooled
+  `weights_mb` / `kv_mb` / `compute_mb`. Exact allocator numbers (no spread);
+  what an estimator fits, and what the report reads at the job's context.
+
+- `load_sweeps` — one row per sweep point: `kind` ("prefill" | "decode").
+  Prefill rows are the instrumented pass's chunks (`chunk_ms` marginal,
+  `ttft_ms` cumulative at depth `tokens`); decode rows the tps spread per
+  `kv_fill`. Points survive a non-ok sweep status — partial data still
+  informs.
+
+- `load_probes` — one row per ceiling point: `kind` ("gemm" | "h2d" | "d2h" |
+  "d2d") with the measured `tflops` or `gbs`.
+
+A missing number is *visible*, not silently absent.
 """
 
 from __future__ import annotations
@@ -38,12 +55,22 @@ from pathlib import Path
 import pandas as pd
 
 # The results schema this loader understands; in lockstep with
-# results.schema.json's `schema_version`. A mismatch is a loud error, not a
-# silently-misaligned frame.
-SCHEMA_VERSION = "1"
+# results.schema.json's `schema_version`. An unknown version is a loud error,
+# not a silently-misaligned frame. v2 files (pre device-lane providers) still
+# load: their bare provider families map to lane index 0 — faithful for every
+# v2 result, since no multi-device box was measured before v3.
+SCHEMA_VERSION = "3"
+_LOADABLE_VERSIONS = ("2", "3")
 
 # Scalar fields copied straight off each run.
 _RUN_KEYS = ("provider", "device", "model", "quant", "healthy", "vram_method")
+
+# Geometry scalars worth having as columns (the full block incl. per-layer
+# typing stays in the JSON for consumers that need it).
+_GEO_KEYS = ("n_layer", "n_params", "file_bytes", "n_ctx_train")
+# The tensor-role split: `body` is what decode streams per token (embeddings are
+# row lookups, the head is tiny/tied) — the estimator's bytes/flops anchor.
+_GEO_TENSOR_KEYS = ("body", "embedding")
 
 
 def _slug(machine: dict) -> str:
@@ -64,6 +91,36 @@ def _machine_label(path: Path, root: Path, machine: dict) -> str:
     return _slug(machine)
 
 
+def _docs(root: str | Path):
+    """(label, machine-base columns, doc) per results file, version-checked."""
+    root = Path(root)
+    for f in sorted(root.glob("**/*-results.json")):
+        doc = json.loads(f.read_text())
+        version = doc.get("schema_version")
+        if version not in _LOADABLE_VERSIONS:
+            raise ValueError(
+                f"{f}: results schema_version={version!r}, "
+                f"loader expects one of {_LOADABLE_VERSIONS!r}"
+            )
+        if version == "2":
+            for entry in list(doc["runs"]) + list(doc.get("probes") or []):
+                if ":" not in entry["provider"]:
+                    entry["provider"] += ":0"
+        machine = doc["machine"]
+        memory = machine.get("memory") or {}
+        base = {
+            "machine": _machine_label(f, root, machine),
+            "os": machine["os"],
+            "cpu": machine["cpu"],
+            "gpu": ", ".join(machine.get("gpus") or []) or "cpu",
+            "ram_gb": memory.get("total_gb"),
+            "ram_channels": memory.get("channels"),
+            "ram_mts": memory.get("configured_mts"),
+            "backend": doc["backend"],
+        }
+        yield base, doc
+
+
 def _explode(stats: dict, into: dict) -> None:
     """Split each `[p50, max]` (or null) stat into `<name>_p50` / `<name>_max`."""
     for name, stat in stats.items():
@@ -73,47 +130,87 @@ def _explode(stats: dict, into: dict) -> None:
 
 
 def load_results(root: str | Path = "results") -> pd.DataFrame:
-    """Load every `*-results.json` under `root` into one tidy frame.
-
-    Raises ValueError on a schema_version mismatch. Returns an empty DataFrame if
-    no results files are found.
-    """
-    root = Path(root)
+    """The validation-job frame: one row per (machine, backend, model, quant,
+    provider). Raises ValueError on a schema_version mismatch; empty DataFrame
+    when no results files are found."""
     rows: list[dict] = []
-    for f in sorted(root.glob("**/*-results.json")):
-        doc = json.loads(f.read_text())
-        if doc.get("schema_version") != SCHEMA_VERSION:
-            raise ValueError(
-                f"{f}: results schema_version={doc.get('schema_version')!r}, "
-                f"loader expects {SCHEMA_VERSION!r}"
-            )
-        machine = doc["machine"]
-        base = {
-            "machine": _machine_label(f, root, machine),
-            "os": machine["os"],
-            "cpu": machine["cpu"],
-            "gpu": ", ".join(machine.get("gpus") or []) or "cpu",
-            "backend": doc["backend"],
-            "iters": doc["iters"],  # sample-size provenance: timing n = iters×spawns
-            "spawns": doc["spawns"],
-        }
+    for base, doc in _docs(root):
         for run in doc["runs"]:
-            run_base = {**base, **{k: run[k] for k in _RUN_KEYS}}
-            run_base["unhealthy_reason"] = run.get("unhealthy_reason")
+            row = {**base, **{k: run[k] for k in _RUN_KEYS}}
+            row["unhealthy_reason"] = run.get("unhealthy_reason")
+            for key in _GEO_KEYS:
+                row[f"geo_{key}"] = (run.get("geometry") or {}).get(key)
+            for key in _GEO_TENSOR_KEYS:
+                role = ((run.get("geometry") or {}).get("tensors") or {}).get(key) or {}
+                row[f"geo_{key}_bytes"] = role.get("bytes")
+                row[f"geo_{key}_params"] = role.get("params")
+            job = run["job"]
+            row["task"] = job["task"] if run["healthy"] else None
+            row["status"] = job["status"] if run["healthy"] else "unhealthy"
+            row["sweep_status"] = run["sweep"]["status"]
+            if job["status"] == "ok":
+                _explode(job["metrics"], row)
+                _explode(job["memory"], row)
+                row["sample_completion"] = (job["sample_completions"] or [None])[0]
+            rows.append(row)
+    return pd.DataFrame(rows)
 
-            if not run["healthy"]:
-                rows.append({**run_base, "task": None, "status": "unhealthy"})
-                continue
 
-            for t in run["tasks"]:
-                row = {**run_base, "task": t["task"], "status": "ok"}
-                _explode(t["metrics"], row)
-                _explode(t["memory"], row)
-                row["sample_completion"] = (t["sample_completions"] or [None])[0]
-                rows.append(row)
-            for task in sorted(run.get("timed_out_tasks") or []):
-                rows.append({**run_base, "task": task, "status": "too_slow"})
-            for task in sorted(run.get("errored_tasks") or []):
-                rows.append({**run_base, "task": task, "status": "errored"})
+def load_sweeps(root: str | Path = "results") -> pd.DataFrame:
+    """The sweep-point frame: one row per measured point, `kind` prefill/decode.
 
+    Prefill rows are the instrumented pass's chunks: `tokens` is the prompt
+    depth the chunk reached (context + chunk), `chunk_ms` the chunk's own cost
+    (the marginal curve — its slope is the attention term), `ttft_ms` the
+    cumulative wall time through that depth. Decode rows carry the tps spread
+    at each kv_fill."""
+    rows: list[dict] = []
+    for base, doc in _docs(root):
+        for run in doc["runs"]:
+            run_base = {**base, **{k: run[k] for k in _RUN_KEYS},
+                        "sweep_status": run["sweep"]["status"]}
+            cum = 0.0
+            for p in run["sweep"]["prefill"]:
+                cum += p["ms"]
+                rows.append({**run_base, "kind": "prefill",
+                             "tokens": p["context"] + p["tokens"], "kv_fill": None,
+                             "chunk_ms": p["ms"], "ttft_ms": round(cum, 2)})
+            for p in run["sweep"]["decode"]:
+                rows.append({**run_base, "kind": "decode", "tokens": p["tokens"],
+                             "kv_fill": p["kv_fill"], "tps_p50": p["tps_p50"],
+                             "tps_min": p["tps_min"], "tps_max": p["tps_max"],
+                             "n_reps": p["n_reps"]})
+    return pd.DataFrame(rows)
+
+
+def load_memory(root: str | Path = "results") -> pd.DataFrame:
+    """The memory-cost-curve frame: one row per allocator context point."""
+    rows: list[dict] = []
+    for base, doc in _docs(root):
+        for run in doc["runs"]:
+            for p in (run.get("geometry") or {}).get("memory_points") or []:
+                b = p["buffers"]
+                rows.append({**base, **{k: run[k] for k in _RUN_KEYS},
+                             "n_ctx": p["n_ctx"],
+                             "weights_mb": round(sum(x["model_bytes"] for x in b) / 1e6, 1),
+                             "kv_mb": round(sum(x["context_bytes"] for x in b) / 1e6, 1),
+                             "compute_mb": round(sum(x["compute_bytes"] for x in b) / 1e6, 1)})
+    return pd.DataFrame(rows)
+
+
+def load_probes(root: str | Path = "results") -> pd.DataFrame:
+    """The device-ceiling frame: one row per probe point."""
+    rows: list[dict] = []
+    for base, doc in _docs(root):
+        for probe in doc.get("probes") or []:
+            probe_base = {**base, "provider": probe["provider"], "device": probe["device"],
+                          "status": probe["status"]}
+            for g in probe["gemm"]:
+                rows.append({**probe_base, "kind": "gemm", "m": g["m"], "n": g["n"],
+                             "k": g["k"], "dtype": g["dtype"], "tflops": g["tflops_p50"],
+                             "gbs": None, "n_reps": g["n_reps"]})
+            for c in probe["copy"]:
+                rows.append({**probe_base, "kind": c["kind"], "m": None, "n": None,
+                             "k": None, "dtype": None, "tflops": None,
+                             "gbs": c["gbs_p50"], "n_reps": c["n_reps"]})
     return pd.DataFrame(rows)

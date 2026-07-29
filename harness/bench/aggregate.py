@@ -12,13 +12,13 @@ A *trace* is the atomic input here: `{"events": <events object | None>, "samples
 it doesn't care whether the trace came straight off a live `SpawnResult` or was
 loaded back from disk.
 
-Where S and K stop being symmetric — each metric is `[p50, max]` (p50 ranks the
-stacks, max flags instability) but over a different pool:
+Sample pools per number:
 
-  • timing (ttft/decode_tps/prefill_tps/completion) — every iteration, all spawns
-    → S×K samples.
-  • per-task memory (prefill/decode high-water) and the warm load phases
-    (model_load/context_init/warmup) — that task's S spawns.
+  • sweep/probe points — each point carries its own adaptive repeats, made in
+    process by the exe; here they reduce to p50/min/max (+ n_reps).
+  • job timing (ttft/decode_tps/prefill_tps/completion) — every iteration of
+    every job spawn, [p50, max].
+  • job memory and the warm load phases — the job's S spawns, [p50, max].
   • cold_start — the genuine first touch of the model on this machine, n=1.
 
 `*_vram` collapses to null when not measurable for the provider (a CPU EP has no
@@ -33,6 +33,9 @@ from . import memory, metrics
 from .spawn import SpawnResult
 
 MAX_SAMPLE_COMPLETIONS = 2
+
+NS_PER_S = 1e9
+NS_PER_MS = 1e6
 
 # A trace: {"events": dict | None, "samples": list[dict]}. The serializable slice
 # of a spawn that aggregation actually consumes.
@@ -54,11 +57,27 @@ def stat(values: list[float | None]) -> list[float] | None:
     return [round(median(vals), 2), round(max(vals), 2)]
 
 
-def _raw_samples(raw: dict):
+def _spread(values: list[float], prefix: str) -> dict:
+    """{<prefix>_p50, <prefix>_min, <prefix>_max} over a point's repeats."""
+    return {
+        f"{prefix}_p50": round(median(values), 2),
+        f"{prefix}_min": round(min(values), 2),
+        f"{prefix}_max": round(max(values), 2),
+    }
+
+
+def _repeat_seconds(repeats: list[dict]) -> list[float]:
+    return [(r["end_ns"] - r["start_ns"]) / NS_PER_S for r in repeats]
+
+
+def _all_traces(raw: dict):
+    for p in raw.get("probes") or []:
+        yield p["trace"]
     for cell in raw["cells"]:
-        for group in [cell["gate_spawns"], *(g["spawns"] for g in cell["tasks"])]:
-            for sp in group:
-                yield from sp["samples"]
+        yield from cell["gate_spawns"]
+        if cell["sweep"].get("trace"):
+            yield cell["sweep"]["trace"]
+        yield from cell["job"]["spawns"]
 
 
 def sampling_sources(raw: dict) -> dict:
@@ -67,17 +86,15 @@ def sampling_sources(raw: dict) -> dict:
     These must come off the raw artifact, never the current host: aggregation is a
     pure function of the raw, and reading the aggregating box instead would
     silently rewrite vram_method whenever a raw is re-aggregated elsewhere (a Mac
-    raw re-aggregated on a Linux box would read "n/a").
-
-    `bench run` records them (raw["sampling"]). A raw predating a capability is
-    still aggregatable: NVML is inferred from the data (any VRAM sample > 0 meant
-    NVML produced it, back when it was the only VRAM source), and `drm` defaults
-    off, which is exactly what those runs sampled — their device-local pool went
-    unread, so their VRAM is null rather than wrong."""
+    raw re-aggregated on a Linux box would read "n/a")."""
     os = raw["machine"]["os"]
     if recorded := raw.get("sampling"):
         return {"os": os, "nvml": recorded["nvml"], "drm": recorded.get("drm", False)}
-    return {"os": os, "nvml": any(s["vram"] > 0 for s in _raw_samples(raw)), "drm": False}
+    return {
+        "os": os,
+        "nvml": any(s["vram"] > 0 for t in _all_traces(raw) for s in t["samples"]),
+        "drm": False,
+    }
 
 
 def _saw_vram(traces: list[Trace]) -> bool:
@@ -99,11 +116,65 @@ def vram_method(traces: list[Trace], sources: dict, provider: str) -> str:
     answer is "not applicable"."""
     if sources["os"] == "macos":
         return "unified"
-    if provider == "cpu" or not _saw_vram(traces):
+    if provider.split(":")[0] == "cpu" or not _saw_vram(traces):
         return "n/a"
     if sources["nvml"]:
         return "nvml"
     return "drm" if sources.get("drm") else "n/a"
+
+
+# ── probes ────────────────────────────────────────────────────────────────────
+
+
+def probe_result(provider: str, trace: Trace) -> dict:
+    """One results probe entry from one probe trace. Throughputs derive from the
+    declared work: GEMM moves 2·m·n·k FLOPs per repeat; a copy moves its payload
+    once for h2d/d2h and reads+writes it for d2d (so ×2 — the STREAM convention
+    for on-device traffic)."""
+    ev = trace["events"]
+    if not ev:
+        return {"provider": provider, "device": "unknown", "status": "errored",
+                "gemm": [], "copy": []}
+    gemm = []
+    for g in ev["gemm"]:
+        tflops = [2 * g["m"] * g["n"] * g["k"] / s / 1e12 for s in _repeat_seconds(g["repeats"])]
+        gemm.append({"m": g["m"], "n": g["n"], "k": g["k"], "dtype": g["dtype"],
+                     "tflops_p50": round(median(tflops), 2), "n_reps": len(tflops)})
+    copy = []
+    for c in ev["copy"]:
+        traffic = c["bytes"] * (2 if c["kind"] == "d2d" else 1)
+        gbs = [traffic / s / 1e9 for s in _repeat_seconds(c["repeats"])]
+        copy.append({"kind": c["kind"], "bytes": c["bytes"],
+                     "gbs_p50": round(median(gbs), 2), "n_reps": len(gbs)})
+    return {"provider": provider, "device": ev["device"], "status": "ok",
+            "gemm": gemm, "copy": copy}
+
+
+# ── sweeps ────────────────────────────────────────────────────────────────────
+
+
+def sweep_result(cell_sweep: dict) -> dict:
+    """Aggregated sweep points from the sweep trace. Points survive a non-ok
+    status — whatever completed before a failure still informs the fit.
+    Prefill chunks pass through as the marginal cost curve (exact, single
+    pass); decode points reduce to their tps spread."""
+    ev = (cell_sweep.get("trace") or {}).get("events")
+    prefill, decode = [], []
+    if ev:
+        for p in ev["prefill_chunks"]:
+            prefill.append({"context": p["context_size"], "tokens": p["tokens_count"],
+                            "ms": round((p["end_ns"] - p["start_ns"]) / NS_PER_MS, 2)})
+        for d in ev["decode_points"]:
+            tps = [
+                (len(r["token_ns"]) - 1) / ((r["token_ns"][-1] - r["token_ns"][0]) / NS_PER_S)
+                for r in d["repeats"]
+            ]
+            decode.append({"kv_fill": d["kv_fill"], "tokens": d["tokens"],
+                           **_spread(tps, "tps"), "n_reps": len(tps)})
+    return {"status": cell_sweep["status"], "prefill": prefill, "decode": decode}
+
+
+# ── the job ───────────────────────────────────────────────────────────────────
 
 
 def _completions(traces: list[Trace]) -> list[str]:
@@ -116,7 +187,7 @@ def _completions(traces: list[Trace]) -> list[str]:
                 seen.append(text)
             if len(seen) >= MAX_SAMPLE_COMPLETIONS:
                 return seen
-    return seen or [""]  # schema requires ≥1; an all-failed task shouldn't reach here
+    return seen or [""]  # schema requires ≥1; an all-failed job shouldn't reach here
 
 
 def task_result(
@@ -167,80 +238,54 @@ def task_result(
     }
 
 
-def run_result(
-    *,
-    model: str,
-    quant: str,
-    provider: str,
-    healthy: bool,
-    all_traces: list[Trace],
-    task_results: list[dict],
-    unhealthy_reason: str | None,
-    sources: dict,
-    timed_out_tasks: list[str] | None = None,
-    errored_tasks: list[str] | None = None,
-) -> dict:
-    """Assemble one results `run` (one model/variant/provider). `sources` is the
-    run box's sampling_sources(raw) — methods derive from it, never from the
-    aggregating host."""
-    method = vram_method(all_traces, sources, provider)
-    device = next((s["events"]["device"] for s in all_traces if s["events"]), "unknown")
-    run = {
-        "provider": provider,
-        "device": device,
-        "model": model,
-        "quant": quant,
-        "healthy": healthy,
-        "vram_method": method,
-        "tasks": task_results,
-    }
-    if not healthy and unhealthy_reason:
-        run["unhealthy_reason"] = unhealthy_reason
-    if timed_out_tasks:  # cells too slow to score within the budget
-        run["timed_out_tasks"] = sorted(timed_out_tasks)
-    if errored_tasks:  # attempted but produced no sample (crash/OOM) — not slowness
-        run["errored_tasks"] = sorted(errored_tasks)
-    return run
+def job_result(cell_job: dict, *, method: str, cold_start_ms: float | None) -> dict:
+    """The validation job entry. Metrics only when the job scored (`ok`) — a
+    too-slow or errored job keeps its status and task name, nothing invented."""
+    out = {"status": cell_job["status"], "task": cell_job["task"]}
+    if cell_job["status"] == "ok":
+        tr = task_result(cell_job["task"], cell_job["spawns"], method=method,
+                         cold_start_ms=cold_start_ms)
+        out["metrics"] = tr["metrics"]
+        out["memory"] = tr["memory"]
+        out["sample_completions"] = tr["sample_completions"]
+    return out
+
+
+# ── assembly ──────────────────────────────────────────────────────────────────
+
+
+def _geometry(traces: list[Trace]) -> dict | None:
+    """The geometry block from the first spawn that reported one — carried
+    verbatim; the runtime is the authority."""
+    for t in traces:
+        if t["events"] and "geometry" in t["events"]:
+            return t["events"]["geometry"]
+    return None
 
 
 def _run_from_cell(cell: dict, sources: dict) -> dict:
     """One results `run` from one raw cell. The cell carries the *structure* and the
-    runtime decisions (gate verdict, which tasks were too slow, the cold-load value
-    to attribute); everything numeric is (re)derived from the traces here."""
-    gate = cell["gate_spawns"]
-    task_groups = cell["tasks"]  # every task that ran spawns, in run order
-    too_slow = set(cell.get("timed_out_tasks") or [])
-    errored = set(cell.get("errored_tasks") or [])
-    unusable = too_slow | errored
-    all_traces = gate + [s for g in task_groups for s in g["spawns"]]
-
+    runtime decisions (gate verdict, sweep/job statuses, the cold-load value to
+    attribute); everything numeric is (re)derived from the traces here."""
+    sweep_traces = [cell["sweep"]["trace"]] if cell["sweep"].get("trace") else []
+    all_traces = cell["gate_spawns"] + sweep_traces + cell["job"]["spawns"]
     method = vram_method(all_traces, sources, cell["provider"])
+    device = next((s["events"]["device"] for s in all_traces if s["events"]), "unknown")
 
-    # The cold first-touch load is attributed once, to the first *scored* task — the
-    # producer stamped `cold_ms` on the owning cell (null elsewhere).
-    scored = [g for g in task_groups if g["task"] not in unusable]
-    cold_for = scored[0]["task"] if scored else None
-    task_results = [
-        task_result(
-            g["task"],
-            g["spawns"],
-            method=method,
-            cold_start_ms=cell.get("cold_ms") if g["task"] == cold_for else None,
-        )
-        for g in scored
-    ]
-    return run_result(
-        model=cell["model"],
-        quant=cell["quant"],
-        provider=cell["provider"],
-        healthy=cell["healthy"],
-        all_traces=all_traces,
-        task_results=task_results,
-        unhealthy_reason=cell.get("reason"),
-        sources=sources,
-        timed_out_tasks=sorted(too_slow),
-        errored_tasks=sorted(errored),
-    )
+    run = {
+        "provider": cell["provider"],
+        "device": device,
+        "model": cell["model"],
+        "quant": cell["quant"],
+        "healthy": cell["healthy"],
+        "vram_method": method,
+        "geometry": _geometry(sweep_traces + cell["job"]["spawns"] + cell["gate_spawns"]),
+        "sweep": sweep_result(cell["sweep"]),
+        "job": job_result(cell["job"], method=method, cold_start_ms=cell.get("cold_ms")),
+    }
+    if not cell["healthy"] and cell.get("reason"):
+        run["unhealthy_reason"] = cell["reason"]
+    return run
 
 
 def build(raw: dict) -> dict:
@@ -248,10 +293,10 @@ def build(raw: dict) -> dict:
     aggregation entrypoint shared by live `run` and `bench aggregate`."""
     sources = sampling_sources(raw)
     return {
-        "schema_version": "1",
+        "schema_version": "3",
         "backend": raw["backend"],
         "machine": raw["machine"],
-        "iters": raw["iters"],
-        "spawns": raw["spawns"],
+        "job_spawns": raw["job_spawns"],
+        "probes": [probe_result(p["provider"], p["trace"]) for p in raw.get("probes") or []],
         "runs": [_run_from_cell(cell, sources) for cell in raw["cells"]],
     }

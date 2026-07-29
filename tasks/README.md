@@ -3,36 +3,32 @@
 What the benchmark runs. The harness resolves each YAML task into a flat task
 JSON (documents inlined, budget explicit) and hands it to the exe via `--task`.
 
-- `tasks.yaml` — the timed catalog.
+- `tasks.yaml` — the validation job (exactly one timed task).
 - `brain_check.yaml` — the provider-health gate.
-- `corpora/*.txt` — documents inlined into the summarize tasks.
+- `corpora/*.txt` — documents inlined into the job.
 
 ## One shape for everything
 
 A task is `{name, max_context_length, messages}`. `system`/`user` turns carry
-`content`; the single `assistant` turn carries no content — it's a turn to
+`content`; an `assistant` turn carries no content — it's a turn to
 **generate** `nb_tokens` (greedy, EOS ignored), optionally with an `expect`
 list. A user turn's content may be `{document: corpora/x.txt}`; the harness
 inlines the text so every backend gets identical bytes and tokenizes them
-itself. Every task is single-turn: one prefill of the rendered prompt, one
-decode — no across-turn KV reuse to manage.
+itself. A task may hold several assistant turns; each turn prefills the full
+re-rendered conversation (previous completions included) from a cleared
+cache — no across-turn KV reuse to manage, every turn's events stand alone.
 
 The harness never trims (it can't tokenize); it inlines documents in full and
 warns loudly if a cell's rendered length overruns `max_context_length`, to be
 fixed by hand here.
 
-## The timed catalog
+## The validation job
 
-`summarize-{small,medium,large}` sweeps prefill cost across a 4×-growing
-prompt at a modest decode budget:
-
-| task | `max_context_length` | prefill (≈tokens) | `nb_tokens` |
-|------|---------------------|-------------------|-------------|
-| small  | 512  | ~400  | 64  |
-| medium | 1024 | ~850  | 128 |
-| large  | 2048 | ~1700 | 256 |
-
-Prefill counts are approximate — each backend tokenizes with its own tokenizer.
+The cost curves come from the backend's synthetic sweeps; the one timed task
+here is the end-to-end check that those curves predict a real workload.
+`summarize-large`: a ~1700-token document (approximate — each backend
+tokenizes with its own tokenizer), `max_context_length` 2048, 256 tokens
+generated. Exactly one timed task must be defined; the harness refuses more.
 
 ## Gating
 
@@ -40,10 +36,11 @@ Prefill counts are approximate — each backend tokenizes with its own tokenizer
   text must contain one of its strings. It catches a wrong chat template, a
   misconfigured provider, a degenerate decode — not bad summaries. Open-ended
   timed tasks carry none.
-- **Brain-check** (`brain_check.yaml`) is the health gate: three trivial tasks
-  run once per `(model, provider)` before its timed tasks. All three must pass
-  or the provider is marked unhealthy and its timed cells are skipped.
+- **Brain-check** (`brain_check.yaml`) is the health gate: one trivial
+  three-turn task run once per `(model, provider)` before anything else — a
+  single spawn, one model load. Every turn's expect must pass or the provider
+  is marked unhealthy and its sweep and job are skipped.
 
 Accepted limitation: the gate validates plumbing up front; quality is not
-re-checked on long-context timed tasks. This is a timing harness gated by a
-correctness smoke test, not a quality benchmark.
+re-checked at long context. This is a timing harness gated by a correctness
+smoke test, not a quality benchmark.

@@ -21,13 +21,13 @@ grows stale, fix it.
 Three things couple the harness and a backend — change them deliberately and keep
 both sides in sync:
 
-1. **CLI** — `providers` / `run` / `version`.
+1. **CLI** — `providers` / `run` / `sweep` / `probe` / `version`.
 2. **JSON schemas** — `schema/{events,results}.schema.json`. A backend's `run`
    output validates against `events.schema.json`; the harness's output against
    `results.schema.json`. A schema change bumps its `schema_version`, updates
    every backend and the analysis loader, and says so in the commit.
 3. **`backend.toml`** — how the harness invokes an exe; its `key` matches the
-   events `backend` field and the `models.yaml` block (`ggml`→`gguf`, `tjs`→`onnx`).
+   events `backend` field and the `models.yaml` block (`ggml`→`gguf`).
 
 Backend invariants (enforced, easy to get wrong):
 

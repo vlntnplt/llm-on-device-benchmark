@@ -11,13 +11,13 @@ import re
 
 import pandas as pd
 
-# Context ladder small→medium→large, not alphabetical.
-TASK_LADDER = ["summarize-small", "summarize-medium", "summarize-large"]
+# The validation job; unknown tasks (a renamed job) append after it.
+TASK_LADDER = ["summarize-large"]
 
 # Stacked-chart segment labels, bottom→top draw order. `charts` keys its
 # palettes off these, so the labels live in exactly one place.
 TIME_PHASES = ["model load", "context init", "warmup", "prefill", "decode"]
-MEMORY_PHASES = ["RAM", "VRAM", "transient peak"]
+MEMORY_PHASES = ["weights", "KV cache", "compute"]
 
 FAIL_LABELS = {"too_slow": "too slow", "errored": "errored"}
 
@@ -30,25 +30,37 @@ _DROP_TOKENS = {"NVIDIA", "AMD", "Intel", "GeForce", "Graphics", "Processor", "C
 
 def _shorten(name: str) -> str:
     """ "NVIDIA GeForce RTX 5080" → "RTX 5080"; "AMD Ryzen 5 PRO 230 w/ Radeon
-    760M Graphics" → "Ryzen 5 230". Keeps anything it doesn't recognise."""
-    toks = [t for t in _NOISE.sub("", name).split()
+    760M Graphics" → "Ryzen 5 230". Keeps anything it doesn't recognise; a name
+    that is *all* dropped tokens ("Intel(R) Graphics (MTL)") keeps its de-noised
+    form ("Intel Graphics") rather than vanishing."""
+    cleaned = _NOISE.sub("", name).split()
+    toks = [t for t in cleaned
             if t not in _DROP_TOKENS and not re.fullmatch(r"\d+-Core", t)]
-    return " ".join(toks)
+    return " ".join(toks or cleaned)
 
 
 def _silicon(df: pd.DataFrame) -> dict[str, tuple[str, str]]:
     """Submission name → (cpu, gpu) short hardware names; gpu is "" when none is
     identifiable. Some machine blocks list no GPUs even though an iGPU ran —
-    then the accelerated providers' `device` strings stand in (skipping wrappers
-    like "webgpu", which shorten to a digit-less provider name, not hardware)."""
+    then the iGPU named in the CPU string ("… w/ Radeon 780M Graphics") stands
+    in, else the accelerated providers' `device` strings (skipping wrappers like
+    "webgpu", which shorten to a provider name, not hardware). A name with no
+    model number ("Intel Graphics") identifies nothing and is discarded — the
+    lane borrows the CPU's name instead, which at least names the die."""
     out: dict[str, tuple[str, str]] = {}
     for m, sub in df.groupby("machine"):
-        cpu = _shorten(sub.cpu.iloc[0])
+        raw_cpu = sub.cpu.iloc[0]
+        cpu = _shorten(raw_cpu)
         gpu = next((_shorten(g) for g in sub.gpu.unique() if g and g != "cpu"), "")
+        if not gpu and (tail := re.search(r"\bw/\s*(.+)$", raw_cpu)):
+            gpu = _shorten(tail.group(1))
         if not gpu and "device" in sub:
+            eps = {p.lower() for p in sub.provider.dropna()}
             devices = sub.loc[sub.provider != "cpu", "device"].dropna().unique()
             gpu = next((s for s in map(_shorten, devices)
-                        if s != cpu and any(c.isdigit() for c in s)), "")
+                        if s and s != cpu and s.lower() not in eps), "")
+        if not re.search(r"\d", gpu):
+            gpu = ""
         out[m] = (cpu, gpu)
     return out
 
@@ -56,12 +68,12 @@ def _silicon(df: pd.DataFrame) -> dict[str, tuple[str, str]]:
 def machine_labels(df: pd.DataFrame) -> dict[str, str]:
     """Submission name → hardware-descriptive display label.
 
-    `monsieurtapir-laptop` says nothing to a reader; `Ryzen 5 230 + Radeon 760M`
+    A submission name says nothing to a reader; `Ryzen 5 230 (Radeon 760M)`
     does. Built from each submission's own cpu/gpu strings (via `_silicon`); a
     machine whose GPU is its CPU (unified, or cpu-only) shows just the chip.
     Duplicate labels get the submission name appended so they stay distinct.
     """
-    labels = {m: (cpu if gpu in ("", cpu) else f"{cpu} + {gpu}")
+    labels = {m: (cpu if gpu in ("", cpu) else f"{cpu} ({gpu})")
               for m, (cpu, gpu) in _silicon(df).items()}
     dupes = pd.Series(labels).duplicated(keep=False)
     return {m: f"{label} ({m})" if dupes[m] else label for m, label in labels.items()}
@@ -72,8 +84,8 @@ def lane_labels(df: pd.DataFrame) -> dict[str, dict[str, str]]:
 
     A *lane* is one piece of silicon a config can run on: a machine's CPU or its
     GPU — `Ryzen 9 9950X · cpu`, `RTX 5080 · gpu`. Named after the silicon, not
-    the machine, so a matchup within a lane compares backends on identical
-    hardware. A unified/unidentified GPU borrows the CPU's name (the `· gpu` tag
+    the machine, so rows within a lane ran on identical hardware. A
+    unified/unidentified GPU borrows the CPU's name (the `· gpu` tag
     still disambiguates). Lanes that collide across machines get the submission
     name appended.
     """
@@ -100,10 +112,11 @@ def prepare(
     lane, anything else → the GPU lane.
 
     A "config" is one (machine, backend, provider, quant) way of running a
-    model. Machine and quant only enter the label when the frame holds more
-    than one — a single-machine run reads as plain `ggml-cuda`, a cross-machine
-    run disambiguates with `Ryzen 5 230 + Radeon 760M · ggml-vulkan`. Labels are
-    computed on every row (ok or failed) so failed configs plot too.
+    model, labeled by the silicon it ran on — `RTX 5080 · ggml-vulkan`, not the
+    machine name. Quant enters only when the frame holds more than one; a
+    single-machine run reads as plain `ggml-cuda`. Identical labels from
+    different submissions get the submission name appended. Labels are computed
+    on every row (ok or failed) so failed configs plot too.
     """
     df = df.copy()
     order = list(ladder)
@@ -124,16 +137,25 @@ def prepare(
     if describe_machines:
         df["machine"] = df.machine.map(machine_labels(df))
 
-    multi_machine = df.machine.nunique() > 1
+    multi_machine = df.submission.nunique() > 1
     multi_quant = df.quant.nunique() > 1
+    _chips = _silicon(df.assign(machine=df.submission))
 
     def config(r):
         s = f"{r.backend}-{r.provider}"
         if multi_quant:
             s += f" {r.quant}"
-        return f"{r.machine} · {s}" if multi_machine else s
+        if not multi_machine:
+            return s
+        cpu, gpu = _chips[r.submission]
+        chip = cpu if r.provider == "cpu" else (gpu or cpu)
+        return f"{chip} · {s}"
 
     df["config"] = df.apply(config, axis=1)
+    # The same silicon on two submissions makes identical labels — append the
+    # submission name so configs stay distinct rows, not silently pooled ones.
+    span = df.groupby("config").submission.transform("nunique")
+    df.loc[span > 1, "config"] = df.config + " (" + df.submission + ")"
     return df, order
 
 
@@ -166,22 +188,34 @@ def time_phases(ok: pd.DataFrame) -> pd.DataFrame:
                             "warmup": "warmup", "prefill": "prefill", "decode": "decode"})
 
 
-def memory_phases(ok: pd.DataFrame) -> pd.DataFrame:
-    """The decode-window footprint: one row per (model, config, phase), MB.
+def memory_model(mem: pd.DataFrame, ok: pd.DataFrame, at: int = 2048
+                 ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Predicted-vs-measured memory at the job's operating point.
 
-    RAM/VRAM = the sustained working set (median-across-spawns of the per-spawn
-    decode median); "transient peak" tops the stack up to the decode high-water
-    mark, so the stacked total reads as the peak the device must fit.
+    `mem` is the memory-cost-curve frame (`load_memory`) and `ok` the scored-job
+    slice, each already carrying a shared `config` label. Bars (long: model,
+    config, phase, value MB): the allocator's point at n_ctx == `at` — the
+    job's context — split into weights / KV cache / compute workspace, pooled
+    over host and device buffers. Ticks (model, config, value): what the job
+    actually occupied — the sustained decode footprint from the outside
+    sampler, RSS and VRAM pooled. Configs without a curve point get no bar
+    (never a zero); configs without a scored job get no tick.
     """
-    g = (ok.groupby(["model", "config"], observed=True)
-         .agg(ram=("decode_rss_sustained_mb_p50", "max"),
-              vram=("decode_vram_sustained_mb_p50", "max"),
-              ram_peak=("decode_rss_peak_mb_max", "max"),
-              vram_peak=("decode_vram_peak_mb_max", "max"))
+    if len(mem):
+        g = (mem[mem.n_ctx == at].groupby(["model", "config"], observed=True)
+             .agg(weights=("weights_mb", "max"), kv=("kv_mb", "max"),
+                  compute=("compute_mb", "max")).reset_index())
+        bars = _melt_phases(g, {"weights": "weights", "kv": "KV cache",
+                                "compute": "compute"})
+    else:
+        bars = pd.DataFrame(columns=["model", "config", "phase", "value"])
+    t = (ok.groupby(["model", "config"], observed=True)
+         .agg(rss=("decode_rss_sustained_mb_p50", "max"),
+              vram=("decode_vram_sustained_mb_p50", "max"))
          .reset_index())
-    g["peak"] = (g.ram_peak.fillna(0) + g.vram_peak.fillna(0)
-                 - g.ram.fillna(0) - g.vram.fillna(0)).clip(lower=0)
-    return _melt_phases(g, {"ram": "RAM", "vram": "VRAM", "peak": "transient peak"})
+    ticks = t.dropna(subset=["rss"]).copy()
+    ticks["value"] = ticks.rss + ticks.vram.fillna(0)
+    return bars, ticks[["model", "config", "value"]]
 
 
 def shared_config_order(frames: list[pd.DataFrame]) -> list[str]:
@@ -221,84 +255,6 @@ def status_cells(df: pd.DataFrame) -> pd.DataFrame:
     cells["who"] = cells.backend + " · " + cells.provider
     return (cells.groupby(["backend", "provider", "who", "status"], observed=True)
             .size().reset_index(name="n"))
-
-
-def _matchup(t: pd.DataFrame, scope: str, col: str) -> pd.DataFrame:
-    """Per (scope, backend, model, task) keep the row minimizing `col`, then add
-    the head-to-head pair view within each (scope, model, task) cell: lo/hi span
-    the backends' values, ratio = hi/lo, and n_backends flags cells where only
-    one backend produced a sample (so a ×1.0 "gap" isn't a tie, it's a
-    walkover)."""
-    best = t.loc[t.groupby([scope, "backend", "model", "task"], observed=True)[col]
-                 .idxmin()].copy()
-    grp = best.groupby([scope, "model", "task"], observed=True)
-    best["lo"] = grp[col].transform("min")
-    best["hi"] = grp[col].transform("max")
-    best["n_backends"] = grp.backend.transform("nunique")
-    best["ratio"] = best.hi / best.lo
-    return best
-
-
-def _with_total_s(ok: pd.DataFrame) -> pd.DataFrame:
-    """Total wall clock from a cold process to a finished answer (load + context
-    + warmup + completion), in seconds as `total_s`."""
-    return ok.assign(total_s=(ok.model_load_ms_p50 + ok.context_init_ms_p50
-                              + ok.warmup_ms_max + ok.completion_ms_p50) / 1000)
-
-
-def best_of_backend(ok: pd.DataFrame) -> pd.DataFrame:
-    """Each backend's fastest config per (machine, model, task) by `total_s`,
-    with the head-to-head columns from `_matchup`."""
-    return _matchup(_with_total_s(ok), "machine", "total_s")
-
-
-def lane_time(ok: pd.DataFrame) -> pd.DataFrame:
-    """Each backend's fastest config per (lane, model, task) by `total_s`, with
-    the head-to-head columns from `_matchup`. Within a lane both backends ran on
-    the same silicon, so the gap is the backend, not the hardware."""
-    return _matchup(_with_total_s(ok), "lane", "total_s")
-
-
-def lane_memory(ok: pd.DataFrame) -> pd.DataFrame:
-    """Each backend's lightest config per (lane, model, task) by `peak_gb` —
-    the high-water RAM+VRAM footprint across prefill *and* decode, i.e. what the
-    device must actually fit (prefill can transiently dwarf decode: compile
-    spikes, arena growth). Head-to-head columns from `_matchup`."""
-    prefill = ok.prefill_rss_peak_mb_max.fillna(0) + ok.prefill_vram_peak_mb_max.fillna(0)
-    decode = ok.decode_rss_peak_mb_max.fillna(0) + ok.decode_vram_peak_mb_max.fillna(0)
-    t = ok.assign(peak_gb=pd.concat([prefill, decode], axis=1).max(axis=1) / 1024)
-    return _matchup(t, "lane", "peak_gb")
-
-
-def fallback_cost(ok: pd.DataFrame, backend: str = "ggml") -> pd.DataFrame:
-    """The CPU-fallback tax as dumbbell pairs: a long view of `gpu_vs_cpu`,
-    one row per (machine, model, task, phase, side) with absolute `seconds` —
-    phase "TTFT" (prefill) or "decode" (the rest of the turn), side cpu/gpu.
-
-    `leg` ("model · phase") keys one dumbbell row; lo/hi/ratio/n_backends
-    mirror `_matchup` so `charts.dumbbell` can draw it (the gap label reads
-    ×prefill_x on TTFT legs and ×decode-time on decode legs).
-    """
-    gvc = gpu_vs_cpu(ok, backend)
-    parts = []
-    for side in ("cpu", "gpu"):
-        base = pd.DataFrame({
-            "machine": gvc.machine, "model": gvc.model, "task": gvc.task,
-            "provider": gvc[f"provider_{side}"], "side": side,
-        })
-        ttft = gvc[f"ttft_ms_p50_{side}"]
-        parts.append(base.assign(phase="TTFT", seconds=ttft / 1000))
-        parts.append(base.assign(
-            phase="decode",
-            seconds=(gvc[f"completion_ms_p50_{side}"] - ttft) / 1000))
-    out = pd.concat(parts, ignore_index=True)
-    out["leg"] = out.model.astype(str) + " · " + out.phase
-    grp = out.groupby(["machine", "leg", "task"], observed=True)
-    out["lo"] = grp.seconds.transform("min")
-    out["hi"] = grp.seconds.transform("max")
-    out["ratio"] = out.hi / out.lo
-    out["n_backends"] = grp.side.transform("nunique")
-    return out
 
 
 def gpu_vs_cpu(ok: pd.DataFrame, backend: str = "ggml") -> pd.DataFrame:

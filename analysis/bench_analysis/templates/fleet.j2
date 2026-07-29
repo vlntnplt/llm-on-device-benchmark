@@ -1,0 +1,82 @@
+<div id="fleet-root">
+<p>Describe your fleet and workload; every model's coverage is computed from
+the calibrated cost model <code>time&nbsp;=&nbsp;t₀&nbsp;+&nbsp;work&nbsp;÷&nbsp;(η&nbsp;×&nbsp;ceiling)</code>
+— each model's work (bytes and FLOPs per token) is measured, t₀ and η are
+pooled from the measured machines. Predictions are estimates; the error box
+says how rough.</p>
+<div class="note" id="fleet-honesty"></div>
+
+<h2>Your fleet</h2>
+<p class="muted">Just set counts — any unit you like (machines, %). Each
+cohort carries sane hardware assumptions, shown per row; tick
+<em>edit hardware assumptions</em> if yours differ (memory is what the model
+may use — VRAM for discrete cards). No Apple machine is in the calibration
+set yet: those rows borrow the pooled GPU parameters and are pure
+extrapolation until the first Mac submission lands.</p>
+<p><label><input type="checkbox" id="fleet-advanced"> edit hardware
+assumptions</label></p>
+<table id="fleet-cohorts">
+  <thead><tr><th>cohort</th><th>count</th>
+  <th class="preset">assumed hardware</th>
+  <th class="adv">memory GB</th><th class="adv">bandwidth GB/s</th>
+  <th class="adv">compute TFLOP/s</th></tr></thead>
+  <tbody></tbody>
+</table>
+
+<h2>Workload &amp; experience tiers</h2>
+<table><tbody>
+  <tr><td>prompt tokens</td><td><input id="w-prompt" type="number" value="1500"></td>
+      <td>output tokens</td><td><input id="w-out" type="number" value="256"></td></tr>
+</tbody></table>
+<table id="fleet-tiers">
+  <thead><tr><th>tier</th><th>max seconds to first token</th><th>min tokens/s</th></tr></thead>
+  <tbody></tbody>
+</table>
+
+<h2>Coverage</h2>
+<p class="legend" id="fleet-legend"></p>
+<p class="muted">Click a model to see the per-cohort predictions behind its
+bar.</p>
+<table id="fleet-results">
+  <thead><tr><th>model</th><th>coverage</th><th>mix</th></tr></thead>
+  <tbody></tbody>
+</table>
+<p class="muted">A cohort "fits" when weights + context + 1 GB headroom fit its
+memory. Prompt-reading time omits the attention term (a few % at these
+lengths).</p>
+
+<details>
+  <summary>calibration behind these predictions</summary>
+  <p>Per measured lane, the affine fit and how well the parameters transfer
+  (leave-one-out: each lane predicted using only the <em>other</em> lanes of
+  its class; lanes with poor fits or unidentifiable rates borrow, never
+  lend):</p>
+  <table>
+    <thead><tr><th>machine</th><th>provider</th><th>phase</th><th>t₀</th>
+    <th>rate</th><th>η</th><th>R²</th></tr></thead>
+    <tbody>
+    {% for f in fits %}
+      <tr><td>{{ f.machine }}</td><td>{{ f.provider }}</td><td>{{ f.kind }}</td>
+          <td>{{ "%.1f"|format(f.t0_ms) }} ms</td><td>{{ f.rate }}</td>
+          <td>{{ f.eta }}</td><td>{{ "%.2f"|format(f.r2) }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <table>
+    <thead><tr><th>machine</th><th>provider</th><th>phase</th>
+    <th>lanes pooled</th><th>median error</th><th>worst</th></tr></thead>
+    <tbody>
+    {% for r in loo %}
+      <tr><td>{{ r.machine }}</td><td>{{ r.provider }}</td><td>{{ r.kind }}</td>
+          <td>{{ r.n_lanes_pooled }}</td>
+          <td>{{ "%.0f"|format(r.median_err * 100) }}%</td>
+          <td>{{ "%.0f"|format(r.worst_err * 100) }}%</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted">Known gaps the next backend iteration addresses: the CPU
+  bandwidth probe under-measures (one lane's measured generation exceeds its
+  "ceiling"), and the compute probe measures f16 while inference runs
+  quantized kernels.</p>
+</details>
+</div>

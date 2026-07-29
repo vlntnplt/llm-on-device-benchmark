@@ -6,19 +6,14 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "pandas>=2.2",       # tidy frame over the per-machine results JSON
+    "altair>=6.0",       # charts as vega-lite specs; the site embeds them
+    "jinja2>=3.1",       # the report is jinja templates over computed context
 ]
 
-# The exploration notebook is opt-in so the loader stays a light import.
-# Install with: uv sync --group notebook
 [dependency-groups]
 dev = [
     "pytest>=8.0",
     "ruff>=0.8",
-]
-notebook = [
-    "marimo>=0.10",      # report.py IS a plain .py reactive notebook — no jupytext pairing
-    "altair>=5.2",       # grouped-bar comparison charts (interactive, exports to HTML)
-    "jinja2>=3.1",       # pandas Styler for the colour-coded coverage table
 ]
 
 [build-system]
@@ -28,18 +23,8 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["bench_analysis"]
 
-# Follow the reader's OS preference in the exported report. This is the setting
-# the export bakes in, and marimo drives both its own styling and the Vega theme
-# from it — a chart only gets light-on-dark axes if marimo itself knows it is
-# dark, which no amount of page CSS can tell it.
-[tool.marimo.display]
-theme = "system"
-
 [tool.ruff]
 line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
-# report.py is a marimo notebook: cells are functions whose returns/locals look
-# unused to a linter, and marimo requires unique top-level names across cells.
-per-file-ignores = { "report.py" = ["F401", "F811", "B018", "E402"] }

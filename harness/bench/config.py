@@ -4,7 +4,7 @@
 exec a backend: `{dir}` is substituted with the backend's absolute directory and
 the harness appends the CLI subcommand + flags. No hardcoded exe paths — the
 `--quant` value is a `models.yaml` quant key, validated against the contract enum
-(fp16|q8|q4|q4f16) in registry.py.
+(fp16|q8|q4|q2) in registry.py.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ MODELS_DIR = REPO / "models"
 REGISTRY = REPO / "models.yaml"  # the model registry + fetch spec
 TASKS_DIR = REPO / "tasks"
 RESULTS_DIR = REPO / "results"
+PROJECT_URL = "https://github.com/vlntnplt/llm-on-device-benchmark"  # the submission tracker
 
 
 @dataclass(frozen=True)

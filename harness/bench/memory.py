@@ -12,16 +12,15 @@ anchor.mono_ns)`.
   • decode  — two numbers over the decode spans. *Peak* is the high-water mark:
               what the device must fit. *Sustained* is the median: the steady
               per-token generation footprint (weights + KV + activations). They
-              diverge when a transient rides into the decode window — e.g. ort's
-              CoreML EP compiles at the first full-context prefill and the spike
-              is still draining when decode starts, so peak reads 26 GB where the
-              plateau the whole decode actually sits on is 8 GB. One number can't
-              carry both facts, so we report both and let the reader pick.
+              diverge when a transient rides into the decode window — e.g. a
+              first-prefill compilation or allocation spike still draining when
+              decode starts, so peak reads far above the plateau the whole
+              decode actually sits on. One number can't carry both facts, so we
+              report both and let the reader pick.
 
 There is deliberately no per-task "context" (KV) figure and no idle-weights
-figure: only ggml holds an idle, preallocated KV buffer to measure (tjs
-materializes KV transiently inside a forward), and the phase footprints already
-carry the weights. We report the phase marks both backends genuinely have.
+figure: the phase footprints already carry the weights and the preallocated KV
+buffer. We report the phase marks the runs genuinely have.
 
 A `Sample` is a mapping {t: wall_unix_ns, rss, vram} — bytes; vram 0 when not
 measured (the run's vram_method, decided in sampling.py, governs whether the

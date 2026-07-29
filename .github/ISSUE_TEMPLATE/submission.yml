@@ -1,0 +1,38 @@
+name: Benchmark submission
+description: Submit the results file produced by run.sh (or `bench bundle`)
+title: "submission: <your machine>"
+labels: [submission]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for running the benchmark! Attach the `submission-<name>.tar.gz`
+        that `run.sh` printed at the end. A maintainer reviews the issue; once
+        it's labeled `accepted`, an automated check validates the file and
+        turns it into a pull request (you'll get a comment either way).
+  - type: textarea
+    id: bundle
+    attributes:
+      label: Submission file
+      description: Drag & drop your `submission-<name>.tar.gz` into this box and wait for the upload link to appear.
+      placeholder: Drop the file here — an attachment link appears when the upload finishes.
+    validations:
+      required: true
+  - type: dropdown
+    id: power
+    attributes:
+      label: Power state during the run
+      description: Battery-throttled runs are noisy — we track this next to the numbers.
+      options:
+        - Plugged in
+        - On battery
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything unusual about this machine?
+      description: "Optional: overclock/undervolt, eGPU, VM or container, unusual cooling, background load during the run…"
+    validations:
+      required: false

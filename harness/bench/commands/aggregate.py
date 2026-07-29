@@ -22,7 +22,7 @@ from pathlib import Path
 from .. import aggregate, schema
 from .._log import log
 
-RAW_SCHEMA_VERSION = "1"
+RAW_SCHEMA_VERSION = "3"
 
 
 def read_raw(path: Path) -> dict:

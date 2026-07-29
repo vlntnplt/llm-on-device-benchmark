@@ -1,10 +1,11 @@
 # On-device LLM inference benchmark
 
-A simple, trustable harness to compare two on-device inference stacks
-— [llama.cpp](https://github.com/ggml-org/llama.cpp) (`ggml`)
-and [Transformers.js](https://github.com/huggingface/transformers.js) (`tjs`) —
-on the same models and prompts, over four axes: **load time,
-time-to-first-token, decode throughput, and memory**.
+A simple, trustable harness to measure the cost of on-device LLM inference
+— [llama.cpp](https://github.com/ggml-org/llama.cpp) (`ggml`) —
+across machines: per provider a bare **device ceiling probe**, per model the
+runtime-reported **geometry**, **prefill/decode sweeps** to 8k context, and one
+real **validation job** measuring load time, time-to-first-token, decode
+throughput, and memory end to end.
 
 **[ARCHITECTURE.md](ARCHITECTURE.md)** is the map — components, the contract,
 the measurement model. This file is how to run the thing. Each component's
@@ -16,10 +17,9 @@ README has its specifics.
 ARCHITECTURE.md    the map — read this first
 schema/            JSON Schemas for the events + results objects — the wire contract
 tasks/             task catalog, corpora, brain-check gate
-models.yaml        model registry + fetch spec (per model: gguf/onnx repos + quants)
+models.yaml        model registry + fetch spec (per model: gguf repo + quants)
 backends/
   ggml/              llama.cpp backend (C++) — builds build/bench-ggml
-  transformersjs/    Transformers.js backend (Node) — key is `tjs`
 harness/            Python tool (uv) — bench fetch/check/plan/run/aggregate/publish
 results/           harness output; local & gitignored except published/ submissions
 analysis/          Python project (uv) — cross-machine comparison notebook
@@ -31,9 +31,8 @@ optionally `third_party/` (local stack checkouts for offline builds or hacking
 
 ## Run a benchmark
 
-1. **Build the backends you care about** — each is an independent unit with its
-   own README and toolchain ([backends/ggml](backends/ggml/README.md),
-   [backends/transformersjs](backends/transformersjs/README.md)). The harness
+1. **Build the backend** — an independent unit with its own README and
+   toolchain ([backends/ggml](backends/ggml/README.md)). The harness
    skips a backend whose exe isn't runnable.
 
 2. **Fetch models and run** — the harness is a [uv](https://docs.astral.sh/uv/)
@@ -73,8 +72,8 @@ name = "llama.cpp / GGML"            # human label
 cmd  = ["{dir}/build/bench-ggml"]    # argv prefix; harness substitutes {dir}, appends the subcommand
 ```
 
-The `key` also selects the backend's `models.yaml` block (`ggml`→`gguf`,
-`tjs`→`onnx`); the directory name is free. The contract rules are summarized in
+The `key` also selects the backend's `models.yaml` block (`ggml`→`gguf`);
+the directory name is free. The contract rules are summarized in
 [ARCHITECTURE.md](ARCHITECTURE.md) and [CLAUDE.md](CLAUDE.md); the schemas in
 [`schema/`](schema/) are the field-level truth. `bench check` is the
 conformance gate.
@@ -82,6 +81,6 @@ conformance gate.
 ## Reproducibility
 
 Every events object embeds `<exe> version` — exact library commits, build
-flags, `use_mmap`, thread count. Quant labels are compared within-label only
-(`ggml q4` = Q4_K_M, `tjs q4` = MatMulNBits — same label, different math), and
-each result's stack versions qualify it.
+flags, `use_mmap`, thread count. A quant label names stack-specific math
+(`q4` = Q4_K_M), so results are compared within a label, and each result's
+stack versions qualify it.
