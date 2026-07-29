@@ -1,6 +1,6 @@
-# Turn an accepted submission issue into a reviewed pull request.
+# Turn an approved submission issue into a reviewed pull request.
 #
-# Trigger: a maintainer labels a submission issue `accepted` — the label IS the
+# Trigger: a maintainer labels a submission issue `ingest` — the label IS the
 # human gate; nothing runs on stranger input before that glance, and nothing
 # reaches main (→ Pages) without the PR review after it. The tarball is still
 # treated as untrusted input end-to-end: `bench ingest` checks structure before
@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   ingest:
-    if: github.event.label.name == 'accepted' && contains(github.event.issue.labels.*.name, 'submission')
+    if: github.event.label.name == 'ingest' && contains(github.event.issue.labels.*.name, 'submission')
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
@@ -58,7 +58,7 @@ jobs:
               echo '```'
               tail -30 ingest.log
               echo '```'
-              echo "Fix and re-attach (edit the issue), then re-apply the \`accepted\` label."
+              echo "Fix and re-attach (edit the issue), then re-apply the \`ingest\` label."
             } >comment.md
             gh issue comment "$ISSUE" --body-file comment.md
             exit "$code"

@@ -180,11 +180,11 @@ plus only what the tarball can't know — power state (plugged/battery),
 anything unusual about the box.
 
 **Workflow** — triggers on `issues: labeled`, acts only on a
-maintainer-applied `accepted` label. The label gate is the design's spine:
+maintainer-applied `ingest` label. The label gate is the design's spine:
 strangers can open issues, but nothing executes until a human glances at it.
 Maintainer workload per submission ≈ two clicks (label, merge).
 
-On `accepted`:
+On `ingest`:
 
 1. Fetch the attachment (public URL on a public repo — plain `curl`).
 2. **Hardened extraction** — the tarball is untrusted input: size cap,
